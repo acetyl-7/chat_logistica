@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "617473071905",
+    "project_id": "logichatinfofirst",
+    "storage_bucket": "logichatinfofirst.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:617473071905:android:1452d63ae356dd230c7c60",
+        "android_client_info": {
+          "package_name": "com.example.chat_logistica"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCt7Sj7qG3mbe47AR9GtIlFJaJdwqpAfNU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
