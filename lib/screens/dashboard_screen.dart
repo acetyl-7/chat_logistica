@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
+import 'package:pattern_formatter/pattern_formatter.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../main.dart'; // Para aceder a flutterLocalNotificationsPlugin e isChatOpen
 
@@ -40,11 +42,6 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final TripPersistenceService _persistence = TripPersistenceService();
-
-  // Estado local: indica se há viagem ativa (controla o botão condicional)
-  bool _hasActiveTrip = false;
-  TripData? _activeTrip;
   String? _driverPhotoUrl;
   String? _driverDisplayName;
   bool _appBarImageError = false;
@@ -64,7 +61,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     _setupMessageListener();
     _setupTaskListener();
     _initFCM();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _checkActiveTrip());
   }
 
   Future<void> _loadDriverProfile() async {
@@ -345,178 +341,394 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
   }
 
-  /// Verifica no SharedPreferences se há viagem ativa e actualiza o botão.
-  /// NJão navega automaticamente — apenas muda o estado da UI.
-  Future<void> _checkActiveTrip() async {
-    final active = await _persistence.loadActiveTrip();
-    if (!mounted) return;
-    setState(() {
-      _hasActiveTrip = active != null;
-      _activeTrip = active;
-    });
+  Future<Position?> _getPosition() async {
+    try {
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!serviceEnabled) return null;
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) return null;
+      }
+      if (permission == LocationPermission.deniedForever) return null;
+
+      return await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+    } catch (_) {
+      try {
+        return await Geolocator.getLastKnownPosition();
+      } catch (e) {
+        debugPrint('Erro ao obter localização: $e');
+        return null;
+      }
+    }
   }
 
-  /// Navega para o TripStatesScreen da viagem ativa e re-verifica ao voltar.
-  void _returnToActiveTrip() {
-    if (_activeTrip == null) return;
-    Navigator.of(context)
-        .push(
-          MaterialPageRoute(
-            builder: (_) => TripStatesScreen(
-              tractorPlate: _activeTrip!.tractorPlate,
-              trailerPlate: _activeTrip!.trailerPlate,
-            ),
-          ),
-        )
-        .then((_) => _checkActiveTrip());
-  }
-
-  Future<void> _logout() async {
-    await FirebaseAuth.instance.signOut();
-  }
-
-  Future<void> _openTripDialog() async {
-    final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+  void _showStartDayForm() {
+    final formKey = GlobalKey<FormState>();
     final tractorController = TextEditingController();
     final trailerController = TextEditingController();
+    final startKmsController = TextEditingController();
+    bool isSubmitting = false;
 
-    // Captura o navigator ANTES de qualquer await (inclui o showDialog)
-    final navigator = Navigator.of(context);
-
-    // Garante que os campos estão sempre vazios ao abrir o formulário
-    tractorController.clear();
-    trailerController.clear();
-
-    final result = await showDialog<Map<String, String>>(
+    showModalBottomSheet(
       context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Iniciar Nova Viagem / Engatar Carreira'),
-          content: SingleChildScrollView(
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 20,
+            right: 20,
+            top: 20,
+          ),
+          child: SingleChildScrollView(
             child: Form(
               key: formKey,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  const Text(
+                    'Iniciar Dia de Trabalho',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 20),
                   TextFormField(
                     controller: tractorController,
                     decoration: const InputDecoration(
-                      labelText: 'Matrícula do Trator (XX-XX-XX)',
+                      labelText: 'Matrícula do Veículo (Obrigatório)',
+                      border: OutlineInputBorder(),
                     ),
                     textCapitalization: TextCapitalization.characters,
                     inputFormatters: [
                       UpperCaseTextFormatter(),
-                      MaskTextInputFormatter(
-                        mask: 'XX-XX-XX',
-                        filter: {"X": RegExp(r'[a-zA-Z0-9]')},
-                        type: MaskAutoCompletionType.lazy,
-                      ),
+                      MaskTextInputFormatter(mask: '##-##-##', filter: {'#': RegExp(r'[a-zA-Z0-9]')}),
                     ],
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Preenchimento obrigatório';
-                      }
-                      final regex = RegExp(
-                        r'^[A-Z0-9]{2}-[A-Z0-9]{2}-[A-Z0-9]{2}$',
-                        caseSensitive: false,
-                      );
-                      if (!regex.hasMatch(value.trim())) {
-                        return 'Formato inválido. Use XX-XX-XX';
-                      }
-                      return null;
-                    },
+                    validator: (v) => v == null || v.isEmpty ? 'Campo obrigatório' : null,
                   ),
+
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: trailerController,
                     decoration: const InputDecoration(
-                      labelText: 'Matrícula da Carreira',
+                      labelText: 'Matrícula do Reboque (Opcional)',
+                      border: OutlineInputBorder(),
                     ),
                     textCapitalization: TextCapitalization.characters,
                     inputFormatters: [
                       UpperCaseTextFormatter(),
-                      MaskTextInputFormatter(
-                        mask: 'A-########',
-                        filter: {
-                          "A": RegExp(r'[a-zA-Z]'),
-                          "#": RegExp(r'[0-9]')
-                        },
-                        type: MaskAutoCompletionType.lazy,
-                      ),
+                      FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9-]')),
                     ],
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Preenchimento obrigatório';
-                      }
-                      final regex = RegExp(r'^[A-Z]', caseSensitive: false);
-                      if (!regex.hasMatch(value.trimLeft())) {
-                        return 'Tem de começar por uma letra';
-                      }
+                  ),
+
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: startKmsController,
+                    decoration: const InputDecoration(
+                      labelText: 'Quilómetros Iniciais (Obrigatório)',
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [ThousandsFormatter()],
+                    validator: (v) {
+                      if (v == null || v.isEmpty) return 'Campo obrigatório';
+                      if (double.tryParse(v.replaceAll(',', '')) == null) return 'Valor inválido';
                       return null;
                     },
                   ),
+                  const SizedBox(height: 20),
+                  ElevatedButton(
+                    onPressed: isSubmitting
+                        ? null
+                        : () async {
+                            if (!formKey.currentState!.validate()) return;
+                            setModalState(() => isSubmitting = true);
+
+                            final pos = await _getPosition();
+                            final uid = FirebaseAuth.instance.currentUser?.uid;
+
+                            await FirebaseFirestore.instance.collection('trips').add({
+                              'driverId': uid,
+                              'tractorPlate': tractorController.text.trim().toUpperCase(),
+                              'trailerPlate': trailerController.text.trim().toUpperCase(),
+                              'startKms': double.parse(startKmsController.text.replaceAll(',', '')),
+                              'startLocation': pos != null ? GeoPoint(pos.latitude, pos.longitude) : null,
+                              'startTime': FieldValue.serverTimestamp(),
+                              'status': 'active',
+                            });
+
+                            if (context.mounted) Navigator.pop(context);
+                          },
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      backgroundColor: Colors.green.shade700,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: isSubmitting
+                        ? const CircularProgressIndicator(color: Colors.white)
+                        : const Text('Iniciar dia de trabalho', style: TextStyle(fontSize: 18)),
+                  ),
+                  const SizedBox(height: 12),
                 ],
               ),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancelar'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                if (formKey.currentState!.validate()) {
-                  final tractor =
-                      tractorController.text.trim().toUpperCase();
-                  var trailer = trailerController.text.trimLeft();
-                  if (trailer.isNotEmpty) {
-                    trailer =
-                        trailer[0].toUpperCase() + trailer.substring(1);
-                  }
-                  Navigator.of(context).pop({
-                    'tractor': tractor,
-                    'trailer': trailer,
-                  });
-                }
-              },
-              child: const Text('Guardar'),
-            ),
-          ],
-        );
-      },
+        ),
+      ),
     );
+  }
 
-    tractorController.dispose();
-    trailerController.dispose();
+  void _showEndDayForm(DocumentSnapshot tripDoc) {
+    final formKey = GlobalKey<FormState>();
+    final endKmsController = TextEditingController();
+    bool isSubmitting = false;
+    final startKms = (tripDoc.data() as Map<String, dynamic>)['startKms'] ?? 0.0;
 
-    if (result != null) {
-      final tractor = result['tractor']!;
-      final trailer = result['trailer']!;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 20,
+            right: 20,
+            top: 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                'Terminar Dia de Trabalho',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 20),
+              Form(
+                key: formKey,
+                child: TextFormField(
+                  controller: endKmsController,
+                  decoration: const InputDecoration(
+                    labelText: 'Quilómetros Finais (Obrigatório)',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [ThousandsFormatter()],
+                  validator: (v) {
+                    if (v == null || v.isEmpty) return 'Campo obrigatório';
+                    final end = double.tryParse(v.replaceAll(',', ''));
+                    if (end == null) return 'Valor inválido';
+                    if (end < startKms) return 'KMs finais inferiores aos iniciais ($startKms)';
+                    return null;
+                  },
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: isSubmitting
+                    ? null
+                    : () async {
+                        if (!formKey.currentState!.validate()) return;
+                        setModalState(() => isSubmitting = true);
 
-      // Guarda a nova viagem em shared_preferences ANTES de navegar
-      await _persistence.saveNewTrip(
-        tractorPlate: tractor,
-        trailerPlate: trailer,
-      );
+                        final pos = await _getPosition();
+                        final endKms = double.parse(endKmsController.text.replaceAll(',', ''));
 
-      // Aguarda que o dialog seja completamente destruído antes de push
-      await Future.delayed(const Duration(milliseconds: 300));
+                        final tripData = tripDoc.data() as Map<String, dynamic>;
+                        final startTime = tripData['startTime'] as Timestamp?;
+                        final uid = FirebaseAuth.instance.currentUser?.uid;
 
-      if (!mounted) return;
-      navigator
-          .push(
-            MaterialPageRoute(
-              builder: (_) => TripStatesScreen(
-                tractorPlate: tractor,
-                trailerPlate: trailer,
+                        await tripDoc.reference.update({
+                          'endKms': endKms,
+                          'endLocation': pos != null ? GeoPoint(pos.latitude, pos.longitude) : null,
+                          'endTime': FieldValue.serverTimestamp(),
+                          'status': 'completed',
+                        });
+
+                        List<Map<String, dynamic>> completedTasks = [];
+                        if (uid != null && startTime != null) {
+                          try {
+                            final tasksSnapshot = await FirebaseFirestore.instance
+                                .collection('tasks')
+                                .where('driverId', isEqualTo: uid)
+                                .where('status', isEqualTo: 'completed')
+                                .get();
+                            
+                            completedTasks = tasksSnapshot.docs
+                                .map((doc) => doc.data())
+                                .where((data) {
+                                  if (data['completedAt'] == null) return false;
+                                  final completedAt = (data['completedAt'] as Timestamp).toDate();
+                                  return completedAt.isAfter(startTime.toDate()) || completedAt.isAtSameMomentAs(startTime.toDate());
+                                })
+                                .toList();
+                          } catch (e) {
+                            debugPrint('Erro ao obter tarefas concluídas: $e');
+                          }
+                        }
+
+                        if (context.mounted) {
+                          Navigator.pop(context);
+                          _showEndOfDayReportDialog(
+                            startKms: startKms,
+                            endKms: endKms,
+                            startTime: startTime?.toDate(),
+                            tasks: completedTasks,
+                          );
+                        }
+                      },
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor: Colors.red.shade700,
+                  foregroundColor: Colors.white,
+                ),
+                child: isSubmitting
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text('Terminar dia de trabalho', style: TextStyle(fontSize: 18)),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showEndOfDayReportDialog({
+    required double startKms,
+    required double endKms,
+    required DateTime? startTime,
+    required List<Map<String, dynamic>> tasks,
+  }) {
+    final now = DateTime.now();
+    final duration = startTime != null ? now.difference(startTime) : Duration.zero;
+    
+    final h = duration.inHours;
+    final m = duration.inMinutes.remainder(60);
+    final durationStr = '${h}h ${m}m';
+
+    final startTimeStr = startTime != null
+        ? '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}'
+        : '--:--';
+    final endTimeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, top: 24, left: 24, right: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.check_circle, size: 60, color: Colors.green.shade600),
+            const SizedBox(height: 16),
+            const Text(
+              'Dia Concluído!',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 24),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('🕒 Início / Fim'),
+                      Text('$startTimeStr | $endTimeStr', style: const TextStyle(fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('⏳ Tempo Total'),
+                      Text(durationStr, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('🛣️ Distância Percorrida'),
+                      Text('${(endKms - startKms).toStringAsFixed(1)} km', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                    ],
+                  ),
+                  const Divider(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('✅ Tarefas Concluídas'),
+                      Text('${tasks.length}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                    ],
+                  ),
+                ],
               ),
             ),
-          )
-          // Re-verifica o estado ao voltar para actualizar o botão condicional
-          .then((_) => _checkActiveTrip());
-    }
+            if (tasks.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              const Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Resumo de Tarefas:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+              const SizedBox(height: 8),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 180),
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: tasks.length,
+                  itemBuilder: (context, index) {
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(child: Text(tasks[index]['title'] ?? 'Tarefa')),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => Navigator.pop(context),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor: Colors.blueGrey.shade800,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                ),
+                child: const Text('FECHAR', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _logout() async {
+    await FirebaseAuth.instance.signOut();
   }
 
   @override
@@ -583,315 +795,302 @@ class _DashboardScreenState extends State<DashboardScreen> {
               .collection('users')
               .doc(FirebaseAuth.instance.currentUser?.uid)
               .snapshots(),
-          builder: (context, snapshot) {
-            final data = snapshot.data?.data() as Map<String, dynamic>?;
-            final bool isAuthorized = data?['isAuthorized'] == true;
+          builder: (context, userSnapshot) {
+            final userData = userSnapshot.data?.data() as Map<String, dynamic>?;
+            final bool isAuthorized = userData?['isAuthorized'] == true;
 
-            return Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  // ── Logo centrado ──────────────────────────────────────────────
-                  Center(
-                    child: Image.asset(
-                      'assets/fleetChatLOGOsmall.png',
-                      width: double.infinity,
-                      height: 120, // Reduzido ligeiramente para dar espaço à foto
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                  const SizedBox(height: 32),
+            return StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('trips')
+                  .where('driverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+                  .where('status', isEqualTo: 'active')
+                  .limit(1)
+                  .snapshots(),
+              builder: (context, tripSnapshot) {
+                final tripDocs = tripSnapshot.data?.docs ?? [];
+                final bool isWorkStarted = tripDocs.isNotEmpty;
+                final tripDoc = isWorkStarted ? tripDocs.first : null;
+                final tripData = tripDoc?.data() as Map<String, dynamic>?;
 
-                  if (!isAuthorized)
-                    Expanded(
-                      child: Center(
-                        child: Container(
-                          padding: const EdgeInsets.all(24),
-                          decoration: BoxDecoration(
-                            color: Colors.amber.shade100,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: Colors.amber.shade400, width: 2),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.pending_actions, size: 64, color: Colors.amber.shade800),
-                              const SizedBox(height: 16),
-                              Text(
-                                'A aguardar autorização da Sede',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.amber.shade900,
-                                ),
-                              ),
-                              const SizedBox(height: 12),
-                              Text(
-                                'Podes completar os teus dados clicando no ícone do Perfil no topo direito.',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.amber.shade800,
-                                ),
-                              ),
-                            ],
-                          ),
+                return Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // ── Logo centrado ──────────────────────────────────────────────
+                      Center(
+                        child: Image.asset(
+                          'assets/fleetChatLOGOsmall.png',
+                          width: double.infinity,
+                          height: 100, // Reduzido ligeiramente
+                          fit: BoxFit.contain,
                         ),
                       ),
-                    )
-                  else ...[
-              // ── Botão condicional: Iniciar Viagem vs Voltar à Viagem ────────
-              // Envolto em Visibility(visible: false) a pedido do cliente
-              Visibility(
-                visible: false,
-                child: SizedBox(
-                  height: 80,
-                  child: _hasActiveTrip
-                      ? ElevatedButton.icon(
-                          onPressed: _returnToActiveTrip,
-                          icon: const Icon(Icons.directions_car, size: 26),
-                          label: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              const Text('Voltar à Viagem'),
-                              if (_activeTrip != null)
-                                Text(
-                                  '${_activeTrip!.tractorPlate} • ${_activeTrip!.trailerPlate}',
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.normal,
+                      const SizedBox(height: 24),
+
+                      if (!isAuthorized)
+                        Expanded(
+                          child: Center(
+                            child: Container(
+                              padding: const EdgeInsets.all(24),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.shade100,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: Colors.amber.shade400, width: 2),
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.pending_actions, size: 64, color: Colors.amber.shade800),
+                                  const SizedBox(height: 16),
+                                  Text(
+                                    'A aguardar autorização da Sede',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 22,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.amber.shade900,
+                                    ),
                                   ),
-                                ),
-                            ],
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue.shade700,
-                            foregroundColor: Colors.white,
-                            textStyle: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    'Podes completar os teus dados clicando no ícone do Perfil no topo direito.',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.amber.shade800,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         )
-                      : ElevatedButton(
-                          onPressed: _openTripDialog,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blueGrey.shade800,
-                            foregroundColor: Colors.white,
-                            textStyle: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                          ),
-                          child: const Text('Iniciar Viagem'),
-                        ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('tasks')
-                    .where('driverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
-                    .snapshots(),
-                builder: (context, taskSnapshot) {
-                  final taskDocs = taskSnapshot.data?.docs ?? [];
-                  final taskCount = taskDocs.where((doc) {
-                    final s = (doc.data() as Map<String, dynamic>)['status'];
-                    return s != 'completed';
-                  }).length;
-
-                  return SizedBox(
-                    height: 80,
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const TasksScreen(),
-                          ),
-                        );
-                      },
-                      icon: const Icon(Icons.checklist, size: 28),
-                      label: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text('Tarefas'),
-                          if (taskCount > 0) ...[
-                            const SizedBox(width: 10),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
+                      else ...[
+                        // ── SMART BANNER (Início/Fim de Dia) ──────────────
+                        Card(
+                          elevation: 4,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          child: InkWell(
+                            onTap: () {
+                              if (isWorkStarted && tripDoc != null) {
+                                _showEndDayForm(tripDoc);
+                              } else {
+                                _showStartDayForm();
+                              }
+                            },
+                            borderRadius: BorderRadius.circular(16),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 300),
+                              padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
                               decoration: BoxDecoration(
-                                color: Colors.red,
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(16),
+                                color: Colors.blueGrey.shade900,
                               ),
-                              child: Text(
-                                taskCount > 99 ? '99+' : taskCount.toString(),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                              child: Row(
+                                children: [
+                                  if (isWorkStarted)
+                                    const _PulseIcon(icon: Icons.fiber_manual_record, color: Colors.white)
+                                  else
+                                    const Icon(Icons.play_circle_fill, size: 40, color: Colors.white),
+                                  const SizedBox(width: 16),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          isWorkStarted ? 'Terminar dia de trabalho' : 'Iniciar dia de trabalho',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 18,
+                                          ),
+                                        ),
+                                        if (isWorkStarted)
+                                          Text(
+                                            '${tripData?['tractorPlate'] ?? '---'} • ${tripData?['trailerPlate'] ?? '---'}',
+                                            style: const TextStyle(color: Colors.white70, fontSize: 14),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Icon(Icons.arrow_forward_ios, color: Colors.white70, size: 20),
+                                ],
                               ),
                             ),
-                          ],
-                        ],
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.teal.shade700,
-                        foregroundColor: Colors.white,
-                        textStyle: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('messages')
-                    .where('driverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
-                    .where('sender', isEqualTo: 'hq')
-                    .where('status', whereIn: ['sent', 'delivered'])
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    print('BADGE ERROR: \${snapshot.error}');
-                    return const SizedBox(height: 80);
-                  }
-
-                  final docs = snapshot.data?.docs;
-                  final unreadCount = docs?.length ?? 0;
-                  print('BADGE DOCS: $unreadCount (connectionState=${snapshot.connectionState})');
-
-                  return SizedBox(
-                    height: 80,
-                    child: ElevatedButton.icon(
-                      onPressed: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => const ChatScreen(),
                           ),
-                        );
-                      },
-                      icon: const Icon(Icons.chat_bubble_outline, size: 28),
-                      label: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text('Mensagens'),
-                          if (unreadCount > 0) ...[
-                            const SizedBox(width: 10),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 8,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.red,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Text(
-                                unreadCount > 99 ? '99+' : unreadCount.toString(),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
+                        ),
+                        const SizedBox(height: 24),
+
+                        // ── Grelha de Botões ──────────────
+                        Expanded(
+                          child: SingleChildScrollView(
+                            child: Column(
+                              children: [
+                                // TAREFAS
+                                Opacity(
+                                  opacity: isWorkStarted ? 1.0 : 0.4,
+                                  child: IgnorePointer(
+                                    ignoring: !isWorkStarted,
+                                    child: _buildDashboardButton(
+                                      context: context,
+                                      label: 'Tarefas',
+                                      icon: Icons.checklist,
+                                      color: Colors.teal.shade700,
+                                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TasksScreen())),
+                                      badgeCountStream: FirebaseFirestore.instance
+                                          .collection('tasks')
+                                          .where('driverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+                                          .snapshots()
+                                          .map((s) => s.docs.where((d) => (d.data() as Map<String, dynamic>)['status'] != 'completed').length),
+                                    ),
+                                  ),
                                 ),
-                              ),
+                                const SizedBox(height: 16),
+
+                                // MENSAGENS
+                                Opacity(
+                                  opacity: isWorkStarted ? 1.0 : 0.4,
+                                  child: IgnorePointer(
+                                    ignoring: !isWorkStarted,
+                                    child: _buildDashboardButton(
+                                      context: context,
+                                      label: 'Mensagens',
+                                      icon: Icons.chat_bubble_outline,
+                                      color: Colors.blue.shade800,
+                                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen())),
+                                      badgeCountStream: FirebaseFirestore.instance
+                                          .collection('messages')
+                                          .where('driverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+                                          .where('sender', isEqualTo: 'hq')
+                                          .where('status', whereIn: ['sent', 'delivered'])
+                                          .snapshots()
+                                          .map((s) => s.docs.length),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+
+                                // ABASTECIMENTOS
+                                Opacity(
+                                  opacity: isWorkStarted ? 1.0 : 0.4,
+                                  child: IgnorePointer(
+                                    ignoring: !isWorkStarted,
+                                    child: _buildDashboardButton(
+                                      context: context,
+                                      label: 'Abastecimentos',
+                                      icon: Icons.local_gas_station,
+                                      color: Colors.orange.shade700,
+                                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RefuelScreen())),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+
+                                // INCIDENTES (Sempre ativo)
+                                _buildDashboardButton(
+                                  context: context,
+                                  label: 'Incidentes',
+                                  icon: Icons.warning_amber_rounded,
+                                  color: Colors.deepOrange.shade600,
+                                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IncidentScreen())),
+                                ),
+                                const SizedBox(height: 16),
+                              ],
                             ),
-                          ],
-                        ],
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue.shade800,
-                        foregroundColor: Colors.white,
-                        textStyle: const TextStyle(
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
+                          ),
                         ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                height: 80,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const RefuelScreen(),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.local_gas_station, size: 28),
-                  label: const Text('Abastecimentos'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange.shade700,
-                    foregroundColor: Colors.white,
-                    textStyle: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
+                      ],
+                    ],
                   ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                height: 80,
-                child: ElevatedButton.icon(
-                  onPressed: () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const IncidentScreen(),
-                      ),
-                    );
-                  },
-                  icon: const Icon(Icons.warning_amber_rounded, size: 28),
-                  label: const Text('Incidentes'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.deepOrange.shade600,
-                    foregroundColor: Colors.white,
-                    textStyle: const TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                  ),
-                ),
-              ),
-                  ],
-                ],
-              ),
+                );
+              },
             );
           },
         ),
       ),
+    );
+  }
+
+  Widget _buildDashboardButton({
+    required BuildContext context,
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onTap,
+    Stream<int>? badgeCountStream,
+  }) {
+    return SizedBox(
+      height: 80,
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon, size: 28),
+        label: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            if (badgeCountStream != null)
+              StreamBuilder<int>(
+                stream: badgeCountStream,
+                builder: (context, snapshot) {
+                  final count = snapshot.data ?? 0;
+                  if (count == 0) return const SizedBox.shrink();
+                  return Container(
+                    margin: const EdgeInsets.only(left: 10),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)),
+                    child: Text(
+                      count > 99 ? '99+' : count.toString(),
+                      style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                    ),
+                  );
+                },
+              ),
+          ],
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: Colors.white,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        ),
+      ),
+    );
+  }
+}
+
+class _PulseIcon extends StatefulWidget {
+  final IconData icon;
+  final Color color;
+  const _PulseIcon({required this.icon, required this.color});
+
+  @override
+  State<_PulseIcon> createState() => _PulseIconState();
+}
+
+class _PulseIconState extends State<_PulseIcon> with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat(reverse: true);
+    _animation = Tween<double>(begin: 0.8, end: 1.2).animate(CurvedAnimation(parent: _controller, curve: Curves.easeInOut));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _animation,
+      child: Icon(widget.icon, size: 40, color: widget.color),
     );
   }
 }

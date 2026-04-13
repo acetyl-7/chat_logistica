@@ -98,9 +98,33 @@ class _TasksScreenState extends State<TasksScreen> {
     try {
       final hasPermission = await _checkLocationPermissions(context);
       if (!hasPermission) return;
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
-      );
+
+      // Guard: o context pode ter sido desmontado enquanto esperava permissão
+      if (!context.mounted) return;
+
+      Position position;
+      try {
+        position = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.high,
+          timeLimit: const Duration(seconds: 10),
+        );
+      } catch (_) {
+        // Fallback para a última posição conhecida se timeout ou erro
+        final lastKnown = await Geolocator.getLastKnownPosition();
+        position = lastKnown ??
+            Position(
+              latitude: 0.0,
+              longitude: 0.0,
+              timestamp: DateTime.now(),
+              accuracy: 0.0,
+              altitude: 0.0,
+              heading: 0.0,
+              speed: 0.0,
+              speedAccuracy: 0.0,
+              altitudeAccuracy: 0.0,
+              headingAccuracy: 0.0,
+            );
+      }
 
       FirebaseFirestore.instance.collection('tasks').doc(docId).update({
         'status': 'in_progress',

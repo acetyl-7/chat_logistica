@@ -4,7 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:package_info_plus/package_info_plus.dart';
+
 
 import 'firebase_options.dart';
 import 'screens/login_screen.dart';
@@ -91,79 +91,17 @@ Future<void> main() async {
   // Inicializar o serviço de sincronização offline
   SyncService().initialize();
 
-  final PackageInfo packageInfo = await PackageInfo.fromPlatform();
-
-  runApp(MyApp(packageInfo: packageInfo));
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {
-  final PackageInfo packageInfo;
-  const MyApp({super.key, required this.packageInfo});
-
-  bool _isVersionOutdated(String installed, String minRequired) {
-    try {
-      // Normalizar versões (remover +build)
-      final String v1 = installed.split('+')[0];
-      final String v2 = minRequired.split('+')[0];
-
-      List<int> parts1 = v1.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-      List<int> parts2 = v2.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-
-      for (int i = 0; i < parts2.length; i++) {
-        int val1 = i < parts1.length ? parts1[i] : 0;
-        int val2 = parts2[i];
-        if (val1 < val2) return true;
-        if (val1 > val2) return false;
-      }
-    } catch (e) {
-      debugPrint('Erro ao comparar versões: $e');
-    }
-    return false;
-  }
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'FleetChat - Infofirst',
-      builder: (context, child) {
-        return StreamBuilder<DocumentSnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('config')
-              .doc('app_settings')
-              .snapshots(),
-          builder: (context, snapshot) {
-            bool isLocked = false;
-            String pin = '1234';
-
-            if (snapshot.hasData && snapshot.data!.exists) {
-              final data = snapshot.data!.data() as Map<String, dynamic>;
-
-              // Se o master lock estiver ativo, bloqueia tudo
-              if (data['forceLock'] == true) {
-                isLocked = true;
-              }
-
-              // Se houver uma versão mínima exigida, comparamos
-              final String? minVersion = data['minVersion']?.toString();
-              if (minVersion != null && minVersion.isNotEmpty) {
-                if (_isVersionOutdated(packageInfo.version, minVersion)) {
-                  isLocked = true;
-                }
-              }
-
-              if (data['unlockPin'] != null) {
-                pin = data['unlockPin'].toString();
-              }
-            }
-
-            return KillSwitchOverlay(
-              isLocked: isLocked,
-              requiredPin: pin,
-              child: child ?? const SizedBox.shrink(),
-            );
-          },
-        );
-      },
+      builder: (context, child) => child ?? const SizedBox.shrink(),
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueGrey),
         scaffoldBackgroundColor: Colors.white,
@@ -198,129 +136,5 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class KillSwitchOverlay extends StatefulWidget {
-  final Widget child;
-  final String requiredPin;
-  final bool isLocked;
 
-  const KillSwitchOverlay({
-    super.key,
-    required this.child,
-    required this.requiredPin,
-    required this.isLocked,
-  });
-
-  @override
-  State<KillSwitchOverlay> createState() => _KillSwitchOverlayState();
-}
-
-class _KillSwitchOverlayState extends State<KillSwitchOverlay> {
-  bool _isBypassed = false;
-  final TextEditingController _pinController = TextEditingController();
-  final FocusNode _focusNode = FocusNode();
-
-  @override
-  void dispose() {
-    _pinController.dispose();
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Se não estiver bloqueado ou se o utilizador já inseriu o PIN com sucesso
-    if (!widget.isLocked || _isBypassed) {
-      return widget.child;
-    }
-
-    return Directionality(
-      textDirection: TextDirection.ltr,
-      child: Stack(
-        children: [
-          // Mantemos a app por baixo (congelada)
-          widget.child,
-          // Ecrã de bloqueio com o seu próprio Overlay para o TextField funcionar
-          Positioned.fill(
-            child: Overlay(
-              initialEntries: [
-                OverlayEntry(
-                  builder: (context) => Scaffold(
-                    backgroundColor: const Color(0xEF000000),
-                    body: Center(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.all(32.0),
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.lock_outline,
-                                size: 80, color: Colors.white),
-                            const SizedBox(height: 24),
-                            const Text(
-                              'Aplicação Bloqueada',
-                              style: TextStyle(
-                                  fontSize: 24,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.white),
-                            ),
-                            const SizedBox(height: 16),
-                            const Text(
-                              'Esta versão da aplicação encontra-se bloqueada.\nPor favor, atualize a aplicação ou insira o PIN de acesso de emergência.',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                  fontSize: 16, color: Colors.white70),
-                            ),
-                            const SizedBox(height: 32),
-                            SizedBox(
-                              width: 200,
-                              child: TextField(
-                                controller: _pinController,
-                                focusNode: _focusNode,
-                                autofocus: true,
-                                keyboardType: TextInputType.number,
-                                obscureText: true,
-                                maxLength: 4,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 28,
-                                    letterSpacing: 16),
-                                textAlign: TextAlign.center,
-                                decoration: InputDecoration(
-                                  hintText: '****',
-                                  hintStyle:
-                                      const TextStyle(color: Colors.white38),
-                                  enabledBorder: OutlineInputBorder(
-                                    borderSide: const BorderSide(
-                                        color: Colors.white54),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  focusedBorder: OutlineInputBorder(
-                                    borderSide: const BorderSide(
-                                        color: Colors.blueAccent),
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                  counterText: '',
-                                ),
-                                onChanged: (value) {
-                                  if (value == widget.requiredPin) {
-                                    setState(() {
-                                      _isBypassed = true;
-                                    });
-                                  }
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
 

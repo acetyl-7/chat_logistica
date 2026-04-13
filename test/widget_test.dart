@@ -8,20 +8,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:chat_logistica/main.dart';
 
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
     // Build our app and trigger a frame.
-    await tester.pumpWidget(MyApp(
-      packageInfo: PackageInfo(
-        appName: 'chat_logistica',
-        packageName: 'com.example.chat_logistica',
-        version: '1.0.0',
-        buildNumber: '1',
-      ),
-    ));
+    await tester.pumpWidget(const MyApp());
 
     // Verify that our counter starts at 0.
     expect(find.text('0'), findsOneWidget);
