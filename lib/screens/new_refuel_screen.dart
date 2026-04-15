@@ -6,7 +6,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:path_provider/path_provider.dart';
 // Extracted from dashboard_screen.dart (or shared)
@@ -316,29 +315,18 @@ class _NewRefuelScreenState extends State<NewRefuelScreen> {
                   controller: _plateController,
                   decoration: const InputDecoration(
                     labelText: 'Matrícula do Veículo',
-                    hintText: 'Ex: XX-XX-XX',
+                    hintText: 'Ex: AA-00-AA',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.directions_car),
                   ),
                   textCapitalization: TextCapitalization.characters,
                   inputFormatters: [
                     UpperCaseTextFormatter(),
-                    MaskTextInputFormatter(
-                      mask: 'XX-XX-XX',
-                      filter: {"X": RegExp(r'[a-zA-Z0-9]')},
-                      type: MaskAutoCompletionType.lazy,
-                    ),
+                    FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9\-]')),
                   ],
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
                       return 'Por favor, insira a matrícula';
-                    }
-                    final regex = RegExp(
-                      r'^[A-Z0-9]{2}-[A-Z0-9]{2}-[A-Z0-9]{2}$',
-                      caseSensitive: false,
-                    );
-                    if (!regex.hasMatch(value.trim())) {
-                      return 'Formato inválido. Use XX-XX-XX';
                     }
                     return null;
                   },

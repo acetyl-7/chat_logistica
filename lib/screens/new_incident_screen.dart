@@ -363,10 +363,7 @@ class _NewIncidentScreenState extends State<NewIncidentScreen> {
                       textCapitalization: TextCapitalization.characters,
                       inputFormatters: [
                         UpperCaseTextFormatter(),
-                        MaskTextInputFormatter(
-                          mask: '##-##-##',
-                          filter: {"#": RegExp(r'[A-Za-z0-9]')},
-                        ),
+                        FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9-]')),
                       ],
                       validator: (value) =>
                           value == null || value.trim().isEmpty ? 'A Matrícula é obrigatória' : null,

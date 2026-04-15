@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
+import 'package:intl/intl.dart';
 import 'package:pattern_formatter/pattern_formatter.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:geolocator/geolocator.dart';
@@ -367,12 +368,40 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
+  /// Obtém a hora real do momento do clique:
+  /// 1. Cloud Function getServerTime (se online)
+  /// 2. Timestamp do GPS (se disponível)
+  /// 3. DateTime.now() como fallback
+  Future<DateTime> _getRealTime(Position? gpsPosition) async {
+    try {
+      final callable = FirebaseFunctions.instanceFor(region: 'europe-west1')
+          .httpsCallable(
+        'getServerTime',
+        options: HttpsCallableOptions(timeout: const Duration(seconds: 5)),
+      );
+      final result = await callable.call();
+      final ts = result.data['timestamp'];
+      if (ts != null) {
+        return DateTime.fromMillisecondsSinceEpoch((ts as num).toInt());
+      }
+    } catch (e) {
+      debugPrint('Cloud Function getServerTime falhou: $e');
+    }
+    // Fallback: timestamp GPS
+    if (gpsPosition != null) {
+      return gpsPosition.timestamp;
+    }
+    // Fallback final
+    return DateTime.now();
+  }
+
   void _showStartDayForm() {
     final formKey = GlobalKey<FormState>();
     final tractorController = TextEditingController();
     final trailerController = TextEditingController();
     final startKmsController = TextEditingController();
     bool isSubmitting = false;
+    DateTime selectedStartTime = DateTime.now();
 
     showModalBottomSheet(
       context: context,
@@ -406,7 +435,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     textCapitalization: TextCapitalization.characters,
                     inputFormatters: [
                       UpperCaseTextFormatter(),
-                      MaskTextInputFormatter(mask: '##-##-##', filter: {'#': RegExp(r'[a-zA-Z0-9]')}),
+                      FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9-]')),
                     ],
                     validator: (v) => v == null || v.isEmpty ? 'Campo obrigatório' : null,
                   ),
@@ -440,6 +469,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       return null;
                     },
                   ),
+
+                  const SizedBox(height: 12),
+                  // ── Selector de hora de início ──────────────────────────
+                  ListTile(
+                    shape: RoundedRectangleBorder(
+                      side: BorderSide(color: Colors.grey.shade400),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    leading: const Icon(Icons.access_time),
+                    title: const Text('Hora de Início'),
+                    subtitle: Text(
+                      DateFormat('dd/MM/yyyy HH:mm').format(selectedStartTime),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    trailing: const Icon(Icons.edit, size: 20),
+                    onTap: () async {
+                      final pickedDate = await showDatePicker(
+                        context: context,
+                        initialDate: selectedStartTime,
+                        firstDate: DateTime.now().subtract(const Duration(days: 1)),
+                        lastDate: DateTime.now(),
+                      );
+                      if (pickedDate == null) return;
+                      if (!context.mounted) return;
+                      final pickedTime = await showTimePicker(
+                        context: context,
+                        initialTime: TimeOfDay.fromDateTime(selectedStartTime),
+                      );
+                      if (pickedTime == null) return;
+                      setModalState(() {
+                        selectedStartTime = DateTime(
+                          pickedDate.year,
+                          pickedDate.month,
+                          pickedDate.day,
+                          pickedTime.hour,
+                          pickedTime.minute,
+                        );
+                      });
+                    },
+                  ),
+
                   const SizedBox(height: 20),
                   ElevatedButton(
                     onPressed: isSubmitting
@@ -449,6 +519,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             setModalState(() => isSubmitting = true);
 
                             final pos = await _getPosition();
+                            final actualTime = await _getRealTime(pos);
                             final uid = FirebaseAuth.instance.currentUser?.uid;
 
                             await FirebaseFirestore.instance.collection('trips').add({
@@ -457,7 +528,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                               'trailerPlate': trailerController.text.trim().toUpperCase(),
                               'startKms': double.parse(startKmsController.text.replaceAll(',', '')),
                               'startLocation': pos != null ? GeoPoint(pos.latitude, pos.longitude) : null,
-                              'startTime': FieldValue.serverTimestamp(),
+                              // Hora escolhida pelo motorista
+                              'startTime': Timestamp.fromDate(selectedStartTime),
+                              // Hora real do clique (server time ou GPS)
+                              'actualStartTime': Timestamp.fromDate(actualTime),
                               'status': 'active',
                             });
 

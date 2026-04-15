@@ -1,4 +1,5 @@
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onCall } = require("firebase-functions/v2/https");
 const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { getMessaging } = require("firebase-admin/messaging");
@@ -91,5 +92,13 @@ exports.onMessageCreated = onDocumentCreated(
       body,
       { type: "message", messageId: event.params.messageId }
     );
+  }
+);
+
+// ─── Callable: devolve a hora actual do servidor ───────────────────────────
+exports.getServerTime = onCall(
+  { region: "europe-west1" },
+  async (_request) => {
+    return { timestamp: Date.now() };
   }
 );

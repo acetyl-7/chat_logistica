@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/user_profile.dart';
 import '../services/user_profile_service.dart';
@@ -141,6 +142,11 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
                       vertical: 18,
                     ),
                   ),
+                  textCapitalization: TextCapitalization.characters,
+                  inputFormatters: [
+                    _UpperCaseTextFormatter(),
+                    FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9\-]')),
+                  ],
                   validator: (value) {
                     if (value == null || value.trim().isEmpty) {
                       return 'Introduz a matrícula';
@@ -203,3 +209,15 @@ class _CompleteProfileScreenState extends State<CompleteProfileScreen> {
   }
 }
 
+class _UpperCaseTextFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    return TextEditingValue(
+      text: newValue.text.toUpperCase(),
+      selection: newValue.selection,
+    );
+  }
+}
