@@ -738,13 +738,35 @@ class _TasksScreenState extends State<TasksScreen> {
         ),
       ),
       body: SafeArea(
-        child: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('tasks')
-              .where('driverId', isEqualTo: currentUser.uid)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
+        child: StreamBuilder<DocumentSnapshot>(
+          stream: FirebaseFirestore.instance.collection('users').doc(currentUser.uid).snapshots(),
+          builder: (context, userSnap) {
+            if (userSnap.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (!userSnap.hasData || !userSnap.data!.exists) {
+              return const Center(child: Text('Perfil de utilizador não encontrado.'));
+            }
+            
+            final userData = userSnap.data!.data() as Map<String, dynamic>? ?? {};
+            final driverId = userData['driverId']?.toString() ?? '';
+
+            if (driverId.isEmpty) {
+              return const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text('O seu perfil ainda não tem um identificador (driverId) associado. Contacte o administrador.', textAlign: TextAlign.center),
+                )
+              );
+            }
+
+            return StreamBuilder<QuerySnapshot>(
+              stream: FirebaseFirestore.instance
+                  .collection('tasks')
+                  .where('driverId', isEqualTo: driverId)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
 
@@ -884,10 +906,12 @@ class _TasksScreenState extends State<TasksScreen> {
               children: listItems,
             );
           },
-        ),
-      ),
-    );
-  }
+        );
+      },
+    ),
+  ),
+);
+}
 
   Widget _buildTaskCard({
     required BuildContext context,

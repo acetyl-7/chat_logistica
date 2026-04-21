@@ -12,6 +12,7 @@ class SignUpScreen extends StatefulWidget {
 class _SignUpScreenState extends State<SignUpScreen> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _nicknameController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _companyController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
@@ -21,6 +22,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _nicknameController.dispose();
     _phoneController.dispose();
     _companyController.dispose();
     _emailController.dispose();
@@ -36,6 +38,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
     });
 
     final name = _nameController.text.trim();
+    final nickname = _nicknameController.text.trim();
     final phone = _phoneController.text.trim();
     final company = _companyController.text.trim();
     final email = _emailController.text.trim();
@@ -49,9 +52,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
       if (user != null) {
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
           'name': name,
+          'nickname': nickname,
           'email': email,
           'phone': phone,
           'company': company,
+          'role': 'Driver',
           'isAuthorized': false,
           'createdAt': FieldValue.serverTimestamp(),
         });
@@ -135,6 +140,29 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
                         return 'Introduz o teu nome';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 20),
+                  TextFormField(
+                    controller: _nicknameController,
+                    textCapitalization: TextCapitalization.words,
+                    style: const TextStyle(fontSize: 20),
+                    decoration: InputDecoration(
+                      labelText: 'Alcunha (Obrigatório)',
+                      labelStyle: const TextStyle(fontSize: 18),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 18,
+                      ),
+                    ),
+                    validator: (value) {
+                      if (value == null || value.trim().isEmpty) {
+                        return 'Introduz a tua alcunha';
                       }
                       return null;
                     },

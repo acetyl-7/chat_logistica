@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -34,10 +35,26 @@ class _LoginScreenState extends State<LoginScreen> {
     final password = _passwordController.text.trim();
 
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      final userCredential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
+
+      final user = userCredential.user;
+      if (user != null) {
+        // Encontra o registo do motorista pelo email e guarda o UID recém-criado/autenticado
+        final querySnap = await FirebaseFirestore.instance
+            .collection('users')
+            .where('email', isEqualTo: email)
+            .limit(1)
+            .get();
+            
+        if (querySnap.docs.isNotEmpty) {
+          await querySnap.docs.first.reference.update({
+            'firebaseUid': user.uid,
+          });
+        }
+      }
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 
