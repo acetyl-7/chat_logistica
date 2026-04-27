@@ -936,6 +936,41 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                       color: Colors.amber.shade800,
                                     ),
                                   ),
+                                  const SizedBox(height: 24),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      ElevatedButton.icon(
+                                        onPressed: () {
+                                          Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) => const ProfileScreen(),
+                                            ),
+                                          );
+                                        },
+                                        icon: const Icon(Icons.person),
+                                        label: const Text('Perfil', style: TextStyle(fontSize: 16)),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.blueGrey.shade700,
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      OutlinedButton.icon(
+                                        onPressed: _logout,
+                                        icon: const Icon(Icons.logout),
+                                        label: const Text('Sair', style: TextStyle(fontSize: 16)),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.red.shade700,
+                                          side: BorderSide(color: Colors.red.shade700),
+                                          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ],
                               ),
                             ),

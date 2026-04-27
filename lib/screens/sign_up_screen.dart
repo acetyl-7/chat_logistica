@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -13,21 +16,42 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _formKey = GlobalKey<FormState>();
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _nicknameController = TextEditingController();
-  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _companyPhoneController = TextEditingController();
   final TextEditingController _companyController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
 
+  // TODO: Alterar para o IP/porta de produção quando disponível
+  static const String _apiBaseUrl = 'http://10.0.2.2:5000'; // 10.0.2.2 = localhost no emulador Android
+
   @override
   void dispose() {
     _nameController.dispose();
     _nicknameController.dispose();
-    _phoneController.dispose();
+    _companyPhoneController.dispose();
     _companyController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  /// Valida o telemóvel de empresa contra a BD via FleetSyncService
+  Future<bool> _validateCompanyPhone(String phone) async {
+    try {
+      // Normalizar: remover espaços e traços
+      final normalized = phone.replaceAll(RegExp(r'[\s\-]'), '');
+      
+      final uri = Uri.parse('$_apiBaseUrl/api/validate-phone?phone=$normalized');
+      final response = await http.get(uri).timeout(
+        const Duration(seconds: 10),
+      );
+
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('Erro ao validar telemóvel: $e');
+      return false;
+    }
   }
 
   Future<void> _register() async {
@@ -39,27 +63,68 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
     final name = _nameController.text.trim();
     final nickname = _nicknameController.text.trim();
-    final phone = _phoneController.text.trim();
+    final companyPhone = _companyPhoneController.text.trim();
     final company = _companyController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
     try {
+      // ─── PASSO 1: Validar telemóvel de empresa ───────────────────────
+      final isPhoneValid = await _validateCompanyPhone(companyPhone);
+      if (!isPhoneValid) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text(
+              'Telemóvel de empresa não encontrado.\nContacta o teu gestor de frota.',
+              style: TextStyle(fontSize: 18),
+            ),
+            backgroundColor: Colors.orange.shade800,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // ─── PASSO 2: Criar conta Firebase (telemóvel válido) ────────────
       final userCredential = await FirebaseAuth.instance
           .createUserWithEmailAndPassword(email: email, password: password);
 
       final user = userCredential.user;
       if (user != null) {
+        // Guardar no Firestore
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
           'name': name,
           'nickname': nickname,
           'email': email,
-          'phone': phone,
+          'phone': companyPhone,
           'company': company,
           'role': 'Driver',
           'isAuthorized': false,
           'createdAt': FieldValue.serverTimestamp(),
         });
+
+        // ─── PASSO 3: Registar na tabela dbo.driver ────────────────────
+        try {
+          final registerUri = Uri.parse('$_apiBaseUrl/api/drivers/register');
+          await http.post(
+            registerUri,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'firebaseUid': user.uid,
+              'email': email,
+              'phoneNumber': companyPhone,
+            }),
+          ).timeout(const Duration(seconds: 10));
+          debugPrint('Driver registado na BD com sucesso: ${user.uid}');
+        } catch (e) {
+          // Não bloquear o registo se falhar a inserção na BD
+          // O Worker pode reconciliar mais tarde
+          debugPrint('Aviso: Falha ao registar driver na BD: $e');
+        }
 
         if (!mounted) return;
         Navigator.of(context).popUntil((route) => route.isFirst);
@@ -169,12 +234,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   ),
                   const SizedBox(height: 20),
                   TextFormField(
-                    controller: _phoneController,
+                    controller: _companyPhoneController,
                     keyboardType: TextInputType.phone,
                     style: const TextStyle(fontSize: 20),
                     decoration: InputDecoration(
-                      labelText: 'Número de Telefone',
+                      labelText: 'Telemóvel de Empresa',
+                      hintText: 'Ex: 912345678',
                       labelStyle: const TextStyle(fontSize: 18),
+                      hintStyle: TextStyle(fontSize: 16, color: Colors.grey.shade500),
+                      prefixIcon: const Icon(Icons.business, size: 24),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(14),
                       ),
@@ -185,7 +253,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
-                        return 'Introduz o número de telefone';
+                        return 'Introduz o telemóvel de empresa';
+                      }
+                      final digits = value.replaceAll(RegExp(r'[\s\-]'), '');
+                      if (digits.length < 9) {
+                        return 'Número inválido (mínimo 9 dígitos)';
                       }
                       return null;
                     },

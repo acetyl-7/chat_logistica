@@ -55,6 +55,7 @@ dependencies:
   cloud_functions: ^6.1.0
   package_info_plus: ^8.1.2
   pattern_formatter: ^4.0.1
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:
