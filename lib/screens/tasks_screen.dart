@@ -30,6 +30,14 @@ class _TasksScreenState extends State<TasksScreen> {
     super.dispose();
   }
 
+  bool _isCompletedStatus(String status) {
+    return status == 'completed' || status == 'terminada' || status == 'anulada';
+  }
+
+  bool _isInProgressStatus(String status) {
+    return status == 'in_progress' || status == 'iniciada';
+  }
+
   Future<bool> _checkLocationPermissions(BuildContext context) async {
     bool serviceEnabled;
     LocationPermission permission;
@@ -127,9 +135,11 @@ class _TasksScreenState extends State<TasksScreen> {
       }
 
       FirebaseFirestore.instance.collection('tasks').doc(docId).update({
-        'status': 'in_progress',
+        'status': 'iniciada',
         'startedAt': Timestamp.now(),
         'startLocation': GeoPoint(position.latitude, position.longitude),
+        'needsSqlSync': true,
+        'statusDate': Timestamp.now(),
       }).catchError((e) {
         debugPrint('Erro ao iniciar tarefa (offline/online): $e');
       });
@@ -511,7 +521,7 @@ class _TasksScreenState extends State<TasksScreen> {
                             }
 
                             final Map<String, dynamic> updateData = {
-                              'status': 'completed',
+                              'status': 'terminada',
                               'completedAt': Timestamp.now(),
                               'completeLocation': GeoPoint(
                                 position.latitude,
@@ -520,6 +530,8 @@ class _TasksScreenState extends State<TasksScreen> {
                               'guiaNumber': _guiaController.text
                                   .trim()
                                   .toUpperCase(),
+                              'needsSqlSync': true,
+                              'statusDate': Timestamp.now(),
                             };
 
                             if (downloadUrl != null) {
@@ -622,7 +634,9 @@ class _TasksScreenState extends State<TasksScreen> {
   }
 
   void _showTaskDetails(BuildContext context, Map<String, dynamic> taskData) {
-    final title = taskData['title'] ?? 'Sem título';
+    final rawTitle = taskData['title']?.toString() ?? '';
+    final taskTypeName = taskData['taskTypeName']?.toString() ?? '';
+    final title = rawTitle.isNotEmpty ? rawTitle : (taskTypeName.isNotEmpty ? taskTypeName : 'Tarefa');
     final description = taskData['description'] ?? '';
     final freightId = taskData['freightId']?.toString();
     final operationLocation = taskData['operationLocation']?.toString();
@@ -633,6 +647,22 @@ class _TasksScreenState extends State<TasksScreen> {
     final tractorPlate = taskData['tractorPlate']?.toString();
     final trailerPlate = taskData['trailerPlate']?.toString();
     final requiresPhotos = taskData['requiresPhotos'] == true;
+
+    // Campos SQL
+    final city = taskData['city']?.toString();
+    final address = taskData['address']?.toString();
+    final country = taskData['country']?.toString();
+    final ref = taskData['ref']?.toString();
+    final obs = taskData['obs']?.toString();
+
+    // Data SQL
+    String formattedTaskDate = '';
+    final dateField = taskData['date'];
+    if (dateField is Timestamp) {
+      final dt = dateField.toDate();
+      formattedTaskDate =
+          '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} às ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+    }
 
     Widget buildDetailRow(String label, String value) {
       return Padding(
@@ -688,19 +718,29 @@ class _TasksScreenState extends State<TasksScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
+                if (formattedTaskDate.isNotEmpty)
+                  buildDetailRow('Data:', formattedTaskDate),
                 if (freightId != null && freightId.isNotEmpty)
                   buildDetailRow('ID Frete:', freightId),
                 if (operationLocation != null && operationLocation.isNotEmpty)
                   buildDetailRow('Local:', operationLocation),
+                if (city != null && city.isNotEmpty)
+                  buildDetailRow('Cidade:', '$city${country != null && country.isNotEmpty ? ", $country" : ""}'),
+                if (address != null && address.isNotEmpty)
+                  buildDetailRow('Morada:', address),
                 if (operationType != null && operationType.isNotEmpty)
                   buildDetailRow(
                     'Operação:',
                     '${operationType == "Outras" && operationTypeOther != null && operationTypeOther.isNotEmpty ? "$operationType - $operationTypeOther" : operationType}${requiresPhotos ? " (Fotos Obrigatórias)" : ""}',
                   ),
                 if (opAddress != null && opAddress.isNotEmpty)
-                  buildDetailRow('Morada:', opAddress),
+                  buildDetailRow('Morada Op.:', opAddress),
                 if (opRef != null && opRef.isNotEmpty)
-                  buildDetailRow('Ref:', opRef),
+                  buildDetailRow('Ref Op.:', opRef),
+                if (ref != null && ref.isNotEmpty)
+                  buildDetailRow('Referência:', ref),
+                if (obs != null && obs.isNotEmpty)
+                  buildDetailRow('Observações:', obs),
                 if (tractorPlate != null && tractorPlate.isNotEmpty)
                   buildDetailRow('Trator:', tractorPlate),
                 if (trailerPlate != null && trailerPlate.isNotEmpty)
@@ -784,31 +824,43 @@ class _TasksScreenState extends State<TasksScreen> {
               snapshot.data?.docs ?? [],
             );
 
-            // Ordenação local para evitar erro de index em falta no Firestore
+            // Ordenação: data ASC (mais antiga primeiro), depois fleetcomTaskOrder ASC
             docs.sort((a, b) {
-              final aTime =
-                  (a.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-              final bTime =
-                  (b.data() as Map<String, dynamic>)['timestamp'] as Timestamp?;
-              if (aTime == null || bTime == null) return 0;
-              return bTime.compareTo(
-                aTime,
-              ); // Descending (mais recente primeiro)
+              final aData = a.data() as Map<String, dynamic>;
+              final bData = b.data() as Map<String, dynamic>;
+
+              // Concluídas vão para o fim
+              final aC = _isCompletedStatus(aData['status']?.toString() ?? '');
+              final bC = _isCompletedStatus(bData['status']?.toString() ?? '');
+              if (aC && !bC) return 1;
+              if (!aC && bC) return -1;
+
+              // Primário: date ASC (mais antiga primeiro)
+              final aDate = aData['date'] as Timestamp? ?? aData['timestamp'] as Timestamp?;
+              final bDate = bData['date'] as Timestamp? ?? bData['timestamp'] as Timestamp?;
+              if (aDate != null && bDate != null) {
+                final cmp = aDate.compareTo(bDate);
+                if (cmp != 0) return cmp;
+              }
+
+              // Secundário: fleetcomTaskOrder ASC
+              final aOrder = aData['fleetcomTaskOrder'] as int? ?? 999999;
+              final bOrder = bData['fleetcomTaskOrder'] as int? ?? 999999;
+              return aOrder.compareTo(bOrder);
             });
 
-            // Ocultar tarefas concluídas (com exceção da última mais recente)
+            // Ocultar tarefas concluídas (com exceção de uma)
             bool foundCompleted = false;
             docs.retainWhere((doc) {
-              final status = (doc.data() as Map<String, dynamic>)['status'];
-              if (status == 'completed') {
+              final status = (doc.data() as Map<String, dynamic>)['status']?.toString() ?? '';
+              if (_isCompletedStatus(status)) {
                 if (!foundCompleted) {
-                  foundCompleted =
-                      true; // Mantém a primeira que é a mais recente
+                  foundCompleted = true;
                   return true;
                 }
-                return false; // Remove as restantes concluídas
+                return false;
               }
-              return true; // Mantém pending e in_progress
+              return true;
             });
 
             if (docs.isEmpty) {
@@ -820,12 +872,10 @@ class _TasksScreenState extends State<TasksScreen> {
               );
             }
 
-            // Encontrar a primeira tarefa que NÃO está concluída (pending ou in_progress).
-            // Como a lista está ordenada pela mais recente, a tarefa "ativa" (que deve ser executada)
-            // é a tarefa pendente mais antiga, ou seja, a última da lista de pendentes.
-            final firstActiveIndex = docs.lastIndexWhere(
-              (doc) =>
-                  (doc.data() as Map<String, dynamic>)['status'] != 'completed',
+            // Primeira tarefa não concluída (a mais antiga — deve ser feita primeiro)
+            final firstActiveIndex = docs.indexWhere(
+              (doc) => !_isCompletedStatus(
+                  (doc.data() as Map<String, dynamic>)['status']?.toString() ?? ''),
             );
 
             String? lastDate;
@@ -921,8 +971,12 @@ class _TasksScreenState extends State<TasksScreen> {
     required bool isFirstActive,
     required bool isLocked,
   }) {
-    final status = taskData['status'] ?? 'pending';
-    final title = taskData['title'] ?? 'Sem título';
+    final status = taskData['status']?.toString() ?? 'pending';
+    // Título: usa title (backoffice) ou taskTypeName (SQL) como fallback
+    final rawTitle = taskData['title']?.toString() ?? '';
+    final taskTypeName = taskData['taskTypeName']?.toString() ?? '';
+    final title = rawTitle.isNotEmpty ? rawTitle : (taskTypeName.isNotEmpty ? taskTypeName : 'Tarefa');
+
     final freightId = taskData['freightId']?.toString();
     final operationLocation = taskData['operationLocation']?.toString();
     final operationType = taskData['operationType']?.toString();
@@ -933,9 +987,18 @@ class _TasksScreenState extends State<TasksScreen> {
     final trailerPlate = taskData['trailerPlate']?.toString();
     final requiresPhotos = taskData['requiresPhotos'] == true;
 
+    // Campos SQL
+    final city = taskData['city']?.toString();
+    final address = taskData['address']?.toString();
+    final country = taskData['country']?.toString();
+    final ref = taskData['ref']?.toString();
+    final obs = taskData['obs']?.toString();
+
+    // Data: preferir 'date' (SQL) senão 'timestamp'
     String formattedDate = '';
-    if (taskData['timestamp'] != null) {
-      final dt = (taskData['timestamp'] as Timestamp).toDate();
+    final dateField = taskData['date'] ?? taskData['timestamp'];
+    if (dateField is Timestamp) {
+      final dt = dateField.toDate();
       formattedDate =
           '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year} às ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     }
@@ -950,11 +1013,10 @@ class _TasksScreenState extends State<TasksScreen> {
       backgroundColor = Colors.white;
       borderColor = Colors.grey.shade300;
     } else if (isFirstActive) {
-      if (status == 'in_progress') {
+      if (_isInProgressStatus(status)) {
         backgroundColor = Colors.green.shade50;
         borderColor = Colors.green.shade400;
       } else {
-        // pending
         backgroundColor = Colors.blue.shade50;
         borderColor = Colors.blue.shade400;
       }
@@ -1005,7 +1067,7 @@ class _TasksScreenState extends State<TasksScreen> {
                       )
                     else if (isLocked)
                       Icon(Icons.lock, color: Colors.grey.shade600, size: 28)
-                    else if (isFirstActive && status == 'in_progress')
+                    else if (isFirstActive && _isInProgressStatus(status))
                       const Icon(
                         Icons.play_circle_fill,
                         color: Colors.green,
@@ -1111,9 +1173,27 @@ class _TasksScreenState extends State<TasksScreen> {
                   ),
                 ],
 
+                // Campos SQL: cidade, morada, país
+                if (city != null && city.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  _buildInfoRow(Icons.location_city, 'Cidade:', '$city${country != null && country.isNotEmpty ? ", $country" : ""}', isLocked),
+                ],
+                if (address != null && address.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  _buildInfoRow(Icons.home_work_outlined, 'Morada:', address, isLocked),
+                ],
+                if (ref != null && ref.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  _buildInfoRow(Icons.bookmark_outline, 'Ref:', ref, isLocked),
+                ],
+                if (obs != null && obs.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  _buildInfoRow(Icons.notes, 'Obs:', obs, isLocked),
+                ],
+
                 if (isFirstActive) ...[
                   const SizedBox(height: 16),
-                  if (status == 'pending')
+                  if (!_isInProgressStatus(status) && !_isCompletedStatus(status))
                     SizedBox(
                       width: double.infinity,
                       height: 50,
@@ -1136,7 +1216,7 @@ class _TasksScreenState extends State<TasksScreen> {
                         ),
                       ),
                     )
-                  else if (status == 'in_progress')
+                  else if (_isInProgressStatus(status))
                     SizedBox(
                       width: double.infinity,
                       height: 50,

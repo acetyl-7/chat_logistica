@@ -14,64 +14,60 @@ class SignUpScreen extends StatefulWidget {
 
 class _SignUpScreenState extends State<SignUpScreen> {
   final _formKey = GlobalKey<FormState>();
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _nicknameController = TextEditingController();
   final TextEditingController _companyPhoneController = TextEditingController();
-  final TextEditingController _companyController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  bool _isLoading = false;
 
-  // TODO: Alterar para o IP/porta de produção quando disponível
-  static const String _apiBaseUrl = 'http://10.0.2.2:5000'; // 10.0.2.2 = localhost no emulador Android
+  String? _selectedCompany;
+  bool _isLoading = false;
+  static const String _apiBaseUrl = 'http://192.168.1.215:5000';
+
+  static const List<String> _companies = [
+    'Patinter',
+    'Cisterpor',
+    'António Frade',
+    'PCDA',
+  ];
 
   @override
   void dispose() {
-    _nameController.dispose();
-    _nicknameController.dispose();
     _companyPhoneController.dispose();
-    _companyController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
   }
 
-  /// Valida o telemóvel de empresa contra a BD via FleetSyncService
-  Future<bool> _validateCompanyPhone(String phone) async {
+  /// Valida o telemóvel e devolve os dados do motorista (alcunha, id)
+  Future<Map<String, dynamic>?> _validateCompanyPhone(String phone) async {
     try {
-      // Normalizar: remover espaços e traços
       final normalized = phone.replaceAll(RegExp(r'[\s\-]'), '');
-      
       final uri = Uri.parse('$_apiBaseUrl/api/validate-phone?phone=$normalized');
-      final response = await http.get(uri).timeout(
-        const Duration(seconds: 10),
-      );
+      final response = await http.get(uri).timeout(const Duration(seconds: 10));
 
-      return response.statusCode == 200;
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      return null;
     } catch (e) {
-      debugPrint('Erro ao validar telemóvel: $e');
-      return false;
+      debugPrint('[REGISTO] Erro ao validar telemóvel: $e');
+      return null;
     }
   }
 
   Future<void> _register() async {
     if (!_formKey.currentState!.validate()) return;
 
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
 
-    final name = _nameController.text.trim();
-    final nickname = _nicknameController.text.trim();
     final companyPhone = _companyPhoneController.text.trim();
-    final company = _companyController.text.trim();
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
     try {
-      // ─── PASSO 1: Validar telemóvel de empresa ───────────────────────
-      final isPhoneValid = await _validateCompanyPhone(companyPhone);
-      if (!isPhoneValid) {
+      // ─── PASSO 1: Validar telemóvel e obter dados do motorista ───────
+      debugPrint('[REGISTO] Passo 1: A validar telemóvel...');
+      final motoristaData = await _validateCompanyPhone(companyPhone);
+      if (motoristaData == null) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -83,34 +79,47 @@ class _SignUpScreenState extends State<SignUpScreen> {
             duration: const Duration(seconds: 5),
           ),
         );
-        setState(() {
-          _isLoading = false;
-        });
+        setState(() => _isLoading = false);
         return;
       }
 
-      // ─── PASSO 2: Criar conta Firebase (telemóvel válido) ────────────
+      final alcunha = motoristaData['alcunha'] as String? ?? '';
+      debugPrint('[REGISTO] Passo 1: Motorista encontrado: $alcunha');
+
+      // ─── PASSO 2: Criar conta Firebase ───────────────────────────────
+      debugPrint('[REGISTO] Passo 2: A criar conta Firebase...');
       final userCredential = await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(email: email, password: password);
+          .createUserWithEmailAndPassword(email: email, password: password)
+          .timeout(
+            const Duration(seconds: 20),
+            onTimeout: () => throw Exception('Timeout ao criar conta. Verifica a ligação à internet.'),
+          );
+      debugPrint('[REGISTO] Passo 2: Conta criada: ${userCredential.user?.uid}');
 
       final user = userCredential.user;
       if (user != null) {
-        // Guardar no Firestore
+        // Guardar no Firestore com dados vindos da BD
+        debugPrint('[REGISTO] Passo 2b: A guardar no Firestore...');
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
-          'name': name,
-          'nickname': nickname,
+          'nickname': alcunha,
+          'name': alcunha,
           'email': email,
           'phone': companyPhone,
-          'company': company,
+          'company': _selectedCompany ?? '',
           'role': 'Driver',
           'isAuthorized': false,
           'createdAt': FieldValue.serverTimestamp(),
-        });
+        }).timeout(
+          const Duration(seconds: 15),
+          onTimeout: () => throw Exception('Timeout ao guardar dados. Tenta outra vez.'),
+        );
+        debugPrint('[REGISTO] Passo 2b: Dados guardados no Firestore!');
 
-        // ─── PASSO 3: Registar na tabela dbo.driver ────────────────────
+        // ─── PASSO 3: Registar na tabela dbo.driver ──────────────────
+        debugPrint('[REGISTO] Passo 3: A registar na BD SQL...');
         try {
           final registerUri = Uri.parse('$_apiBaseUrl/api/drivers/register');
-          await http.post(
+          final response = await http.post(
             registerUri,
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({
@@ -119,44 +128,42 @@ class _SignUpScreenState extends State<SignUpScreen> {
               'phoneNumber': companyPhone,
             }),
           ).timeout(const Duration(seconds: 10));
-          debugPrint('Driver registado na BD com sucesso: ${user.uid}');
+          debugPrint('[REGISTO] Passo 3: BD respondeu com status ${response.statusCode}');
         } catch (e) {
-          // Não bloquear o registo se falhar a inserção na BD
-          // O Worker pode reconciliar mais tarde
-          debugPrint('Aviso: Falha ao registar driver na BD: $e');
+          debugPrint('[REGISTO] Passo 3 (aviso): Falha ao registar na BD: $e');
         }
 
+        debugPrint('[REGISTO] Registo concluído com sucesso!');
         if (!mounted) return;
         Navigator.of(context).popUntil((route) => route.isFirst);
       }
     } on FirebaseAuthException catch (e) {
+      debugPrint('[REGISTO] Erro Firebase Auth: ${e.code} - ${e.message}');
+      if (!mounted) return;
+      String mensagem = e.message ?? 'Erro ao criar conta';
+      if (e.code == 'email-already-in-use') {
+        mensagem = 'Este email já está registado. Usa outro email ou faz login.';
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(mensagem, style: const TextStyle(fontSize: 18)),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    } catch (e) {
+      debugPrint('[REGISTO] Erro inesperado: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            e.message ?? 'Erro ao criar conta',
+            e.toString().contains('Timeout') ? e.toString() : 'Erro inesperado ao registar. Tenta outra vez.',
             style: const TextStyle(fontSize: 18),
-          ),
-          backgroundColor: Colors.red.shade700,
-        ),
-      );
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text(
-            'Erro inesperado ao registar. Tenta outra vez.',
-            style: TextStyle(fontSize: 18),
           ),
           backgroundColor: Colors.red,
         ),
       );
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -166,10 +173,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
       appBar: AppBar(
         title: const Text(
           'Criar Conta',
-          style: TextStyle(
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
         ),
       ),
       body: SafeArea(
@@ -182,57 +186,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const Text(
-                    'Preenche os detalhes para criar a tua conta.',
+                    'Preenche os teus dados para criar a conta.',
                     style: TextStyle(fontSize: 18),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 32),
-                  TextFormField(
-                    controller: _nameController,
-                    textCapitalization: TextCapitalization.words,
-                    style: const TextStyle(fontSize: 20),
-                    decoration: InputDecoration(
-                      labelText: 'Nome',
-                      labelStyle: const TextStyle(fontSize: 18),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 18,
-                      ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Introduz o teu nome';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _nicknameController,
-                    textCapitalization: TextCapitalization.words,
-                    style: const TextStyle(fontSize: 20),
-                    decoration: InputDecoration(
-                      labelText: 'Alcunha (Obrigatório)',
-                      labelStyle: const TextStyle(fontSize: 18),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 18,
-                      ),
-                    ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Introduz a tua alcunha';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 20),
+
+                  // ── Telemóvel de Empresa ──────────────────────────────
                   TextFormField(
                     controller: _companyPhoneController,
                     keyboardType: TextInputType.phone,
@@ -243,49 +203,41 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       labelStyle: const TextStyle(fontSize: 18),
                       hintStyle: TextStyle(fontSize: 16, color: Colors.grey.shade500),
                       prefixIcon: const Icon(Icons.business, size: 24),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 18,
-                      ),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
                     ),
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
                         return 'Introduz o telemóvel de empresa';
                       }
                       final digits = value.replaceAll(RegExp(r'[\s\-]'), '');
-                      if (digits.length < 9) {
-                        return 'Número inválido (mínimo 9 dígitos)';
-                      }
+                      if (digits.length < 9) return 'Número inválido (mínimo 9 dígitos)';
                       return null;
                     },
                   ),
                   const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _companyController,
-                    textCapitalization: TextCapitalization.words,
-                    style: const TextStyle(fontSize: 20),
+
+                  // ── Empresa (Dropdown) ────────────────────────────────
+                  DropdownButtonFormField<String>(
+                    value: _selectedCompany,
                     decoration: InputDecoration(
                       labelText: 'Empresa',
                       labelStyle: const TextStyle(fontSize: 18),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 18,
-                      ),
+                      prefixIcon: const Icon(Icons.local_shipping, size: 24),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
                     ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Introduz a empresa';
-                      }
-                      return null;
-                    },
+                    style: const TextStyle(fontSize: 18, color: Colors.black87),
+                    items: _companies
+                        .map((c) => DropdownMenuItem(value: c, child: Text(c)))
+                        .toList(),
+                    onChanged: (value) => setState(() => _selectedCompany = value),
+                    validator: (value) =>
+                        value == null ? 'Seleciona a tua empresa' : null,
                   ),
                   const SizedBox(height: 20),
+
+                  // ── Email ─────────────────────────────────────────────
                   TextFormField(
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
@@ -294,25 +246,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     decoration: InputDecoration(
                       labelText: 'Email',
                       labelStyle: const TextStyle(fontSize: 18),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 18,
-                      ),
+                      prefixIcon: const Icon(Icons.email_outlined, size: 24),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
                     ),
                     validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Introduz o email';
-                      }
-                      if (!value.contains('@')) {
-                        return 'Email inválido';
-                      }
+                      if (value == null || value.trim().isEmpty) return 'Introduz o email';
+                      if (!value.contains('@')) return 'Email inválido';
                       return null;
                     },
                   ),
                   const SizedBox(height: 20),
+
+                  // ── Password ──────────────────────────────────────────
                   TextFormField(
                     controller: _passwordController,
                     obscureText: true,
@@ -320,25 +266,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     decoration: InputDecoration(
                       labelText: 'Password',
                       labelStyle: const TextStyle(fontSize: 18),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 18,
-                      ),
+                      prefixIcon: const Icon(Icons.lock_outline, size: 24),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
                     ),
                     validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Introduz a password';
-                      }
-                      if (value.trim().length < 6) {
-                        return 'Mínimo 6 caracteres';
-                      }
+                      if (value == null || value.trim().isEmpty) return 'Introduz a password';
+                      if (value.trim().length < 6) return 'Mínimo 6 caracteres';
                       return null;
                     },
                   ),
                   const SizedBox(height: 28),
+
+                  // ── Botão Registar ────────────────────────────────────
                   SizedBox(
                     height: 64,
                     child: ElevatedButton(
@@ -346,18 +286,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.blueGrey.shade800,
                         foregroundColor: Colors.white,
-                        textStyle: const TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(14),
-                        ),
+                        textStyle: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                       ),
                       child: _isLoading
                           ? const CircularProgressIndicator(
-                              valueColor:
-                                  AlwaysStoppedAnimation<Color>(Colors.white),
+                              valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
                             )
                           : const Text('Registar'),
                     ),
