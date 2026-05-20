@@ -1066,25 +1066,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 const SizedBox(height: 16),
 
                                 // MENSAGENS
-                                Opacity(
-                                  opacity: isWorkStarted ? 1.0 : 0.4,
-                                  child: IgnorePointer(
-                                    ignoring: !isWorkStarted,
-                                    child: _buildDashboardButton(
-                                      context: context,
-                                      label: 'Mensagens',
-                                      icon: Icons.chat_bubble_outline,
-                                      color: Colors.blue.shade800,
-                                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen())),
-                                      badgeCountStream: FirebaseFirestore.instance
-                                          .collection('messages')
-                                          .where('driverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
-                                          .where('sender', isEqualTo: 'hq')
-                                          .where('status', whereIn: ['sent', 'delivered'])
-                                          .snapshots()
-                                          .map((s) => s.docs.length),
-                                    ),
-                                  ),
+                                _buildDashboardButton(
+                                  context: context,
+                                  label: 'Mensagens',
+                                  icon: Icons.chat_bubble_outline,
+                                  color: Colors.blue.shade800,
+                                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen())),
+                                  badgeCountStream: FirebaseFirestore.instance
+                                      .collection('messages')
+                                      .where('driverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+                                      .where('sender', isEqualTo: 'hq')
+                                      .where('status', whereIn: ['sent', 'delivered'])
+                                      .snapshots()
+                                      .map((s) => s.docs.length),
                                 ),
                                 const SizedBox(height: 16),
 
