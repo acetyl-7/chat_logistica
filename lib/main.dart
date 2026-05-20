@@ -27,19 +27,6 @@ final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
-  final notification = message.notification;
-  if (notification == null) return;
-
-  const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-    'tasks_channel',
-    'Notificações',
-    channelDescription: 'Notificações de tarefas e mensagens',
-    importance: Importance.max,
-    priority: Priority.high,
-  );
-  const NotificationDetails platformDetails =
-      NotificationDetails(android: androidDetails);
-
   final isTask = message.data['type'] == 'task';
   
   if (!isTask) {
@@ -55,14 +42,8 @@ Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
       }
     }
   }
-
-  await flutterLocalNotificationsPlugin.show(
-    id: message.hashCode & 0x7FFFFFFF,
-    title: notification.title,
-    body: notification.body,
-    notificationDetails: platformDetails,
-  );
 }
+
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

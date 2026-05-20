@@ -202,21 +202,48 @@ class _DashboardScreenState extends State<DashboardScreen> {
     print('Permissão de Notificação: $status');
   }
 
-  void _setupTaskListener() {
+  void _setupTaskListener() async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return;
     print('TASK LISTENER: A iniciar listener para UID=$uid');
 
+    // 1. Obter o driverId (ID do SQL) do utilizador a partir da coleção 'users'
+    String targetDriverId = uid;
+    try {
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(uid).get();
+      if (userDoc.exists) {
+        final userData = userDoc.data();
+        final sqlDriverId = userData?['driverId']?.toString();
+        if (sqlDriverId != null && sqlDriverId.isNotEmpty) {
+          targetDriverId = sqlDriverId;
+          print('TASK LISTENER: Encontrado SQL driverId=$targetDriverId para UID=$uid');
+        }
+      }
+    } catch (e) {
+      print('TASK LISTENER: Erro ao obter driverId do perfil: $e');
+    }
+
+    // Cancelar subscrição anterior se existir
+    await _taskSubscription?.cancel();
+
+    // Ouvir as tarefas que correspondem ao Firebase UID ou ao SQL driverId
+    final driverIds = {uid, targetDriverId}.toList();
+
     _taskSubscription = FirebaseFirestore.instance
         .collection('tasks')
-        .where('driverId', isEqualTo: uid)
-        .where('status', isEqualTo: 'pending')
+        .where('driverId', whereIn: driverIds)
         .snapshots()
         .listen((snapshot) {
       for (var change in snapshot.docChanges) {
         if (change.type == DocumentChangeType.added) {
-          final data = change.doc.data() as Map<String, dynamic>?;
+          final data = change.doc.data();
           if (data == null) continue;
+
+          // Filtro manual de estados válidos para notificação de novas tarefas:
+          final status = data['status']?.toString();
+          if (status != 'pending' && status != 'por_enviar' && status != 'enviada') {
+            continue;
+          }
 
           final ts = data['timestamp'];
           DateTime? taskTime;
@@ -304,11 +331,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     // Listener de foreground: quando a app está aberta e chega uma notificação FCM,
-    // o Android não a mostra automaticamente --- temos de a mostrar nós via local_notifications.
+    // o status do chat é atualizado. Não geramos notificações locais redundantes aqui,
+    // pois os listeners do Firestore já o fazem de forma robusta e contextualizada.
     _fcmSubscription = FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      final notification = message.notification;
-      if (notification == null) return;
-
       final isTask = message.data['type'] == 'task';
 
       if (!isTask) {
@@ -321,24 +346,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
               .catchError((e) => print('Erro a marcar como entregue: $e'));
         }
       }
-
-      // Suprimir se o utilizador já está no ecrã correto
-      if (isTask && isTasksOpen) return;
-      if (!isTask && isChatOpen) return;
-
-      final AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-        isTask ? 'tasks_channel' : 'chat_messages_channel',
-        isTask ? 'Tarefas' : 'Mensagens de Chat',
-        importance: Importance.max,
-        priority: Priority.high,
-      );
-
-      flutterLocalNotificationsPlugin.show(
-        id: message.hashCode & 0x7FFFFFFF,
-        title: notification.title,
-        body: notification.body,
-        notificationDetails: NotificationDetails(android: androidDetails),
-      );
     });
   }
 

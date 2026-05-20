@@ -10,9 +10,24 @@ initializeApp();
 async function getDriverToken(driverId) {
   if (!driverId) return null;
   try {
-    const userDoc = await getFirestore().collection("users").doc(driverId).get();
-    if (!userDoc.exists) return null;
-    return userDoc.data().fcmToken || null;
+    // 1. Tentar procurar pelo campo driverId (caso seja o ID numérico do SQL)
+    const usersSnapshot = await getFirestore()
+      .collection("users")
+      .where("driverId", "==", driverId.toString())
+      .limit(1)
+      .get();
+      
+    if (!usersSnapshot.empty) {
+      return usersSnapshot.docs[0].data().fcmToken || null;
+    }
+
+    // 2. Fallback: tentar procurar diretamente pelo ID de documento (caso seja o Firebase UID)
+    const userDoc = await getFirestore().collection("users").doc(driverId.get ? driverId : driverId.toString()).get();
+    if (userDoc.exists) {
+      return userDoc.data().fcmToken || null;
+    }
+    
+    return null;
   } catch (err) {
     console.error("Erro ao obter token do motorista:", err);
     return null;
@@ -52,11 +67,11 @@ exports.onTaskCreated = onDocumentCreated(
     const data = event.data?.data();
     if (!data) return;
 
-    // Só notificar se a tarefa estiver pendente
-    if (data.status !== "pending") return;
+    // Só notificar se a tarefa estiver pendente ou vinda de SQL (por_enviar / enviada)
+    if (data.status !== "pending" && data.status !== "por_enviar" && data.status !== "enviada") return;
 
     const driverId = data.driverId;
-    const taskTitle = data.title || "Nova Tarefa";
+    const taskTitle = data.title || data.taskTypeName || "Nova Tarefa";
 
     const token = await getDriverToken(driverId);
     await sendFCM(
