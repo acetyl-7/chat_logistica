@@ -33,10 +33,7 @@ class DefaultFirebaseOptions {
           'you can reconfigure this by running the FlutterFire CLI again.',
         );
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -50,11 +47,11 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCt7Sj7qG3mbe47AR9GtIlFJaJdwqpAfNU',
-    appId: '1:617473071905:android:1452d63ae356dd230c7c60',
-    messagingSenderId: '617473071905',
-    projectId: 'logichatinfofirst',
-    storageBucket: 'logichatinfofirst.firebasestorage.app',
+    apiKey: 'AIzaSyCyofX2gfe3hK5sGkikwvFmXAdd1yq9fSs',
+    appId: '1:909421828884:android:2e7baccc9884937ee58001',
+    messagingSenderId: '909421828884',
+    projectId: 'cisterpor-fleetsync',
+    storageBucket: 'cisterpor-fleetsync.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
@@ -65,4 +62,14 @@ class DefaultFirebaseOptions {
     storageBucket: 'logichatinfofirst.firebasestorage.app',
     iosBundleId: 'com.example.chatLogistica',
   );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyB1o0wTDYUag0F5LgeVDRNhdr0d9t1H4zg',
+    appId: '1:909421828884:web:83ab0fab65c87942e58001',
+    messagingSenderId: '909421828884',
+    projectId: 'cisterpor-fleetsync',
+    authDomain: 'cisterpor-fleetsync.firebaseapp.com',
+    storageBucket: 'cisterpor-fleetsync.firebasestorage.app',
+  );
+
 }

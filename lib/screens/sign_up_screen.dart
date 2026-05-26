@@ -20,7 +20,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   String? _selectedCompany;
   bool _isLoading = false;
-  static const String _apiBaseUrl = 'http://192.168.1.215:5000';
+  static const String _apiBaseUrl = 'http://192.168.1.5:5000';
 
   static const List<String> _companies = [
     'Patinter',
