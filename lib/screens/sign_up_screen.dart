@@ -1,9 +1,6 @@
-import 'dart:convert';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -20,7 +17,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
   String? _selectedCompany;
   bool _isLoading = false;
-  static const String _apiBaseUrl = 'http://192.168.1.5:5000';
 
   static const List<String> _companies = [
     'Patinter',
@@ -37,19 +33,43 @@ class _SignUpScreenState extends State<SignUpScreen> {
     super.dispose();
   }
 
-  /// Valida o telemóvel e devolve os dados do motorista (alcunha, id)
+  /// Valida o telemóvel diretamente no Firestore (sem depender da API HTTP local)
   Future<Map<String, dynamic>?> _validateCompanyPhone(String phone) async {
     try {
+      // Normalizar: remover espaços, traços e prefixo +351
       final normalized = phone.replaceAll(RegExp(r'[\s\-]'), '');
-      final uri = Uri.parse('$_apiBaseUrl/api/validate-phone?phone=$normalized');
-      final response = await http.get(uri).timeout(const Duration(seconds: 10));
+      final digits = normalized.replaceAll(RegExp(r'[^\d]'), '');
+      final cleanPhone = digits.startsWith('351') && digits.length > 9
+          ? digits.substring(3)
+          : digits;
 
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
+      debugPrint('[REGISTO] A validar telemóvel no Firestore: $cleanPhone');
+
+      // Procurar na coleção 'company_drivers' pelo campo companyPhone
+      final snapshot = await FirebaseFirestore.instance
+          .collection('company_drivers')
+          .where('companyPhone', isEqualTo: cleanPhone)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 10));
+
+      if (snapshot.docs.isNotEmpty) {
+        final doc = snapshot.docs.first;
+        final data = doc.data();
+        debugPrint('[REGISTO] Motorista encontrado: ${data['nickname']}');
+        return {
+          'valid': true,
+          'alcunha': data['nickname'] ?? '',
+          'fleetcomDriverId': int.tryParse(data['sqlId']?.toString() ?? '') ?? 0,
+          'telemovel': data['companyPhone'] ?? '',
+          'firestoreDocId': doc.id,
+        };
       }
+
+      debugPrint('[REGISTO] Nenhum motorista encontrado para $cleanPhone');
       return null;
     } catch (e) {
-      debugPrint('[REGISTO] Erro ao validar telemóvel: $e');
+      debugPrint('[REGISTO] Erro ao validar telemóvel no Firestore: $e');
       return null;
     }
   }
@@ -98,7 +118,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
 
       final user = userCredential.user;
       if (user != null) {
-        // Guardar no Firestore com dados vindos da BD
+        // Guardar no Firestore com dados vindos da validação
         debugPrint('[REGISTO] Passo 2b: A guardar no Firestore...');
         await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
           'nickname': alcunha,
@@ -108,6 +128,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
           'company': _selectedCompany ?? '',
           'role': 'Driver',
           'isAuthorized': false,
+          'firebaseUid': user.uid,
           'createdAt': FieldValue.serverTimestamp(),
         }).timeout(
           const Duration(seconds: 15),
@@ -115,23 +136,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
         );
         debugPrint('[REGISTO] Passo 2b: Dados guardados no Firestore!');
 
-        // ─── PASSO 3: Registar na tabela dbo.driver ──────────────────
-        debugPrint('[REGISTO] Passo 3: A registar na BD SQL...');
-        try {
-          final registerUri = Uri.parse('$_apiBaseUrl/api/drivers/register');
-          final response = await http.post(
-            registerUri,
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'firebaseUid': user.uid,
-              'email': email,
-              'phoneNumber': companyPhone,
-            }),
-          ).timeout(const Duration(seconds: 10));
-          debugPrint('[REGISTO] Passo 3: BD respondeu com status ${response.statusCode}');
-        } catch (e) {
-          debugPrint('[REGISTO] Passo 3 (aviso): Falha ao registar na BD: $e');
-        }
+        // O FleetSyncService (Worker) irá detetar este novo utilizador no Firebase
+        // e registá-lo automaticamente na tabela dbo.driver do SQL Server.
+        // Não precisamos de chamar a API HTTP diretamente.
 
         debugPrint('[REGISTO] Registo concluído com sucesso!');
         if (!mounted) return;

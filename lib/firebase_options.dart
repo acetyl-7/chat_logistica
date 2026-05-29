@@ -17,10 +17,7 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'DefaultFirebaseOptions have not been configured for web - '
-        'you can reconfigure this by running the FlutterFire CLI again.',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -28,10 +25,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.iOS:
         return ios;
       case TargetPlatform.macOS:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for macos - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return macos;
       case TargetPlatform.windows:
         return windows;
       case TargetPlatform.linux:
@@ -47,11 +41,11 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyCyofX2gfe3hK5sGkikwvFmXAdd1yq9fSs',
-    appId: '1:909421828884:android:2e7baccc9884937ee58001',
-    messagingSenderId: '909421828884',
-    projectId: 'cisterpor-fleetsync',
-    storageBucket: 'cisterpor-fleetsync.firebasestorage.app',
+    apiKey: 'AIzaSyCt7Sj7qG3mbe47AR9GtIlFJaJdwqpAfNU',
+    appId: '1:617473071905:android:1452d63ae356dd230c7c60',
+    messagingSenderId: '617473071905',
+    projectId: 'logichatinfofirst',
+    storageBucket: 'logichatinfofirst.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
@@ -64,12 +58,32 @@ class DefaultFirebaseOptions {
   );
 
   static const FirebaseOptions windows = FirebaseOptions(
-    apiKey: 'AIzaSyB1o0wTDYUag0F5LgeVDRNhdr0d9t1H4zg',
-    appId: '1:909421828884:web:83ab0fab65c87942e58001',
-    messagingSenderId: '909421828884',
-    projectId: 'cisterpor-fleetsync',
-    authDomain: 'cisterpor-fleetsync.firebaseapp.com',
-    storageBucket: 'cisterpor-fleetsync.firebasestorage.app',
+    apiKey: 'AIzaSyDjn3i7OzS90XKzBRWbOJi59ee64hHOG0M',
+    appId: '1:617473071905:web:c9602af35c6841aa0c7c60',
+    messagingSenderId: '617473071905',
+    projectId: 'logichatinfofirst',
+    authDomain: 'logichatinfofirst.firebaseapp.com',
+    storageBucket: 'logichatinfofirst.firebasestorage.app',
+    measurementId: 'G-99C5P6JZWW',
+  );
+
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyDjn3i7OzS90XKzBRWbOJi59ee64hHOG0M',
+    appId: '1:617473071905:web:49ece88870ce6dc00c7c60',
+    messagingSenderId: '617473071905',
+    projectId: 'logichatinfofirst',
+    authDomain: 'logichatinfofirst.firebaseapp.com',
+    storageBucket: 'logichatinfofirst.firebasestorage.app',
+    measurementId: 'G-6QJW3P3SXX',
+  );
+
+  static const FirebaseOptions macos = FirebaseOptions(
+    apiKey: 'AIzaSyDLzV273TQVGgn2PNCeLgn7srNXXJCDGQc',
+    appId: '1:617473071905:ios:81cf9cbb0b18cf190c7c60',
+    messagingSenderId: '617473071905',
+    projectId: 'logichatinfofirst',
+    storageBucket: 'logichatinfofirst.firebasestorage.app',
+    iosBundleId: 'com.example.chatLogistica',
   );
 
 }
