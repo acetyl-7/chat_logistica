@@ -66,6 +66,30 @@ Future<void> main() async {
     settings: initializationSettings,
   );
 
+  // Criar canais de notificação no Android para que o SO os reconheça em background
+  final androidPlugin = flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+  
+  if (androidPlugin != null) {
+    await androidPlugin.createNotificationChannel(const AndroidNotificationChannel(
+      'chat_messages_channel',
+      'Mensagens de Chat',
+      description: 'Notificações de novas mensagens do chat de suporte',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+    ));
+
+    await androidPlugin.createNotificationChannel(const AndroidNotificationChannel(
+      'tasks_channel',
+      'Tarefas',
+      description: 'Notificações de novas tarefas atribuídas',
+      importance: Importance.max,
+      playSound: true,
+      enableVibration: true,
+    ));
+  }
+
   // Registar handler de background FCM
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
 
