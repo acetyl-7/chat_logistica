@@ -141,6 +141,47 @@ class _ChatScreenState extends State<ChatScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             mainAxisSize: MainAxisSize.min,
                             children: [
+                              if (message.replyToId != null)
+                                Container(
+                                  margin: const EdgeInsets.only(bottom: 8.0),
+                                  padding: const EdgeInsets.all(8.0),
+                                  decoration: BoxDecoration(
+                                    color: isMe
+                                        ? Colors.white10
+                                        : const Color(0x0D000000), // Colors.black with 5% opacity
+                                    borderRadius: BorderRadius.circular(8.0),
+                                    border: Border(
+                                      left: BorderSide(
+                                        color: isMe ? Colors.blueAccent.shade100 : Colors.blueGrey.shade700,
+                                        width: 4.0,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        message.replyToSender == 'hq' ? 'Sede' : 'Motorista',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                          color: isMe ? Colors.blueAccent.shade100 : Colors.blueGrey.shade700,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        message.replyToText ?? '',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontStyle: FontStyle.italic,
+                                          color: isMe ? Colors.white70 : Colors.black87,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
+                                ),
                                 if (message.type == 'image' &&
                                     derivedImageSourceUrl != null &&
                                     derivedImageSourceUrl.isNotEmpty) ...[

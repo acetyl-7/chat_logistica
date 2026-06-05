@@ -17,6 +17,9 @@ class ChatMessage {
   final bool isPending;
   final String status;
   final DateTime timestamp;
+  final String? replyToId;
+  final String? replyToText;
+  final String? replyToSender;
 
   ChatMessage({
     required this.id,
@@ -35,6 +38,9 @@ class ChatMessage {
     this.isPending = false,
     this.status = 'sent',
     required this.timestamp,
+    this.replyToId,
+    this.replyToText,
+    this.replyToSender,
   });
 
   Map<String, dynamic> toMap() {
@@ -53,6 +59,9 @@ class ChatMessage {
       if (longitude != null) 'longitude': longitude,
       'status': status,
       'timestamp': Timestamp.fromDate(timestamp),
+      if (replyToId != null) 'replyToId': replyToId,
+      if (replyToText != null) 'replyToText': replyToText,
+      if (replyToSender != null) 'replyToSender': replyToSender,
     };
   }
 
@@ -97,6 +106,9 @@ class ChatMessage {
       isPending: isPending,
       status: map['status'] as String? ?? 'sent',
       timestamp: dateTime,
+      replyToId: map['replyToId'] as String?,
+      replyToText: map['replyToText'] as String?,
+      replyToSender: map['replyToSender'] as String?,
     );
   }
 }

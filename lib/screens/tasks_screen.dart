@@ -81,6 +81,40 @@ class _TasksScreenState extends State<TasksScreen> {
   }
 
   Future<void> _startTask(BuildContext context, String docId) async {
+    final String? uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
+    try {
+      final activeTrips = await FirebaseFirestore.instance
+          .collection('trips')
+          .where('driverId', isEqualTo: uid)
+          .where('status', isEqualTo: 'active')
+          .limit(1)
+          .get();
+
+      if (activeTrips.docs.isEmpty) {
+        if (!context.mounted) return;
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Dia de Trabalho Não Iniciado'),
+            content: const Text(
+              'Não pode iniciar tarefas sem que o dia de trabalho esteja a decorrer. Por favor, inicie o dia de trabalho no Dashboard.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+    } catch (e) {
+      debugPrint('Erro ao verificar dia de trabalho ativo: $e');
+    }
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -164,6 +198,7 @@ class _TasksScreenState extends State<TasksScreen> {
     File? _guiaImage;
     File? _operationImage;
     bool _isUploading = false;
+    String? errorMessage;
 
     final bool requiresPhotos = taskData['requiresPhotos'] == true;
     final String opType = taskData['operationType']?.toString() ?? 'Carga';
@@ -234,6 +269,7 @@ class _TasksScreenState extends State<TasksScreen> {
                                     if (image != null) {
                                       setStateDialog(() {
                                         _guiaImage = File(image.path);
+                                        errorMessage = null;
                                       });
                                     }
                                   },
@@ -285,6 +321,7 @@ class _TasksScreenState extends State<TasksScreen> {
                                     if (image != null) {
                                       setStateDialog(() {
                                         _guiaImage = File(image.path);
+                                        errorMessage = null;
                                       });
                                     }
                                   },
@@ -345,6 +382,7 @@ class _TasksScreenState extends State<TasksScreen> {
                                     if (image != null) {
                                       setStateDialog(() {
                                         _operationImage = File(image.path);
+                                        errorMessage = null;
                                       });
                                     }
                                   },
@@ -374,6 +412,26 @@ class _TasksScreenState extends State<TasksScreen> {
                                   ),
                                 ],
                               ],
+                              if (errorMessage != null) ...[
+                                const SizedBox(height: 16),
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.shade50,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(color: Colors.red.shade200),
+                                  ),
+                                  child: Text(
+                                    errorMessage!,
+                                    style: TextStyle(
+                                      color: Colors.red.shade800,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -390,25 +448,15 @@ class _TasksScreenState extends State<TasksScreen> {
                         onPressed: () async {
                           if (!_formKey.currentState!.validate()) return;
                           if (isCargaDescarga && _guiaImage == null) {
-                            ScaffoldMessenger.of(stfContext).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Por favor, anexe a foto da Guia.',
-                                ),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
+                            setStateDialog(() {
+                              errorMessage = 'Por favor, anexe a foto da Guia.';
+                            });
                             return;
                           }
                           if (requiresPhotos && _operationImage == null) {
-                            ScaffoldMessenger.of(stfContext).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Por favor, anexe a foto obrigatória da operação.',
-                                ),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
+                            setStateDialog(() {
+                              errorMessage = 'Por favor, anexe a foto obrigatória da operação.';
+                            });
                             return;
                           }
 

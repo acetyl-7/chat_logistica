@@ -623,20 +623,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         final startTime = tripData['startTime'] as Timestamp?;
                         final uid = FirebaseAuth.instance.currentUser?.uid;
 
-                        await tripDoc.reference.update({
-                          'endKms': endKms,
-                          'endLocation': pos != null ? GeoPoint(pos.latitude, pos.longitude) : null,
-                          'endTime': FieldValue.serverTimestamp(),
-                          'status': 'completed',
-                        });
-
                         List<Map<String, dynamic>> completedTasks = [];
+                        List<Map<String, dynamic>> inProgressTasks = [];
+
                         if (uid != null && startTime != null) {
                           try {
                             final tasksSnapshot = await FirebaseFirestore.instance
                                 .collection('tasks')
                                 .where('driverId', isEqualTo: uid)
-                                .where('status', isEqualTo: 'completed')
+                                .where('status', whereIn: ['completed', 'terminada'])
                                 .get();
                             
                             completedTasks = tasksSnapshot.docs
@@ -647,10 +642,34 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                   return completedAt.isAfter(startTime.toDate()) || completedAt.isAtSameMomentAs(startTime.toDate());
                                 })
                                 .toList();
+
+                            final inProgressSnapshot = await FirebaseFirestore.instance
+                                .collection('tasks')
+                                .where('driverId', isEqualTo: uid)
+                                .where('status', whereIn: ['iniciada', 'in_progress'])
+                                .get();
+                            
+                            inProgressTasks = inProgressSnapshot.docs
+                                .map((doc) => doc.data())
+                                .where((data) {
+                                  if (data['startedAt'] == null) return false;
+                                  final startedAt = (data['startedAt'] as Timestamp).toDate();
+                                  return startedAt.isAfter(startTime.toDate()) || startedAt.isAtSameMomentAs(startTime.toDate());
+                                })
+                                .toList();
                           } catch (e) {
-                            debugPrint('Erro ao obter tarefas concluídas: $e');
+                            debugPrint('Erro ao obter tarefas: $e');
                           }
                         }
+
+                        await tripDoc.reference.update({
+                          'endKms': endKms,
+                          'endLocation': pos != null ? GeoPoint(pos.latitude, pos.longitude) : null,
+                          'endTime': FieldValue.serverTimestamp(),
+                          'status': 'completed',
+                          'completedTasksCount': completedTasks.length,
+                          'inProgressTasksCount': inProgressTasks.length,
+                        });
 
                         if (context.mounted) {
                           Navigator.pop(context);
@@ -659,6 +678,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             endKms: endKms,
                             startTime: startTime?.toDate(),
                             tasks: completedTasks,
+                            inProgressTasks: inProgressTasks,
                           );
                         }
                       },
@@ -684,6 +704,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     required double endKms,
     required DateTime? startTime,
     required List<Map<String, dynamic>> tasks,
+    required List<Map<String, dynamic>> inProgressTasks,
   }) {
     final now = DateTime.now();
     final duration = startTime != null ? now.difference(startTime) : Duration.zero;
@@ -757,10 +778,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Text('${tasks.length}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey)),
                     ],
                   ),
+                  const Divider(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('⏳ Tarefas a Decorrer'),
+                      Text('${inProgressTasks.length}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey)),
+                    ],
+                  ),
                 ],
               ),
             ),
-            if (tasks.isNotEmpty) ...[
+            if (tasks.isNotEmpty || inProgressTasks.isNotEmpty) ...[
               const SizedBox(height: 20),
               const Align(
                 alignment: Alignment.centerLeft,
@@ -769,21 +798,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(height: 8),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 180),
-                child: ListView.builder(
+                child: ListView(
                   shrinkWrap: true,
-                  itemCount: tasks.length,
-                  itemBuilder: (context, index) {
-                    return Padding(
+                  children: [
+                    ...tasks.map((t) => Padding(
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       child: Row(
                         children: [
                           const Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
                           const SizedBox(width: 10),
-                          Expanded(child: Text(tasks[index]['title'] ?? 'Tarefa')),
+                          Expanded(child: Text(t['title'] ?? t['taskTypeName'] ?? 'Tarefa')),
                         ],
                       ),
-                    );
-                  },
+                    )),
+                    ...inProgressTasks.map((t) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.play_circle_outline, color: Colors.orange, size: 20),
+                          const SizedBox(width: 10),
+                          Expanded(child: Text(t['title'] ?? t['taskTypeName'] ?? 'Tarefa (a decorrer)')),
+                        ],
+                      ),
+                    )),
+                  ],
                 ),
               ),
             ],
@@ -1045,23 +1083,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             child: Column(
                               children: [
                                 // TAREFAS
-                                Opacity(
-                                  opacity: isWorkStarted ? 1.0 : 0.4,
-                                  child: IgnorePointer(
-                                    ignoring: !isWorkStarted,
-                                    child: _buildDashboardButton(
-                                      context: context,
-                                      label: 'Tarefas',
-                                      icon: Icons.checklist,
-                                      color: Colors.teal.shade700,
-                                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TasksScreen())),
-                                      badgeCountStream: FirebaseFirestore.instance
-                                          .collection('tasks')
-                                          .where('driverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
-                                          .snapshots()
-                                          .map((s) => s.docs.where((d) => (d.data() as Map<String, dynamic>)['status'] != 'completed').length),
-                                    ),
-                                  ),
+                                _buildDashboardButton(
+                                  context: context,
+                                  label: 'Tarefas',
+                                  icon: Icons.checklist,
+                                  color: Colors.teal.shade700,
+                                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const TasksScreen())),
+                                  badgeCountStream: FirebaseFirestore.instance
+                                      .collection('tasks')
+                                      .where('driverId', isEqualTo: FirebaseAuth.instance.currentUser?.uid)
+                                      .snapshots()
+                                      .map((s) => s.docs.where((d) => d.data()['status'] != 'completed' && d.data()['status'] != 'terminada').length),
                                 ),
                                 const SizedBox(height: 16),
 
@@ -1083,18 +1115,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 const SizedBox(height: 16),
 
                                 // ABASTECIMENTOS
-                                Opacity(
-                                  opacity: isWorkStarted ? 1.0 : 0.4,
-                                  child: IgnorePointer(
-                                    ignoring: !isWorkStarted,
-                                    child: _buildDashboardButton(
-                                      context: context,
-                                      label: 'Abastecimentos',
-                                      icon: Icons.local_gas_station,
-                                      color: Colors.orange.shade700,
-                                      onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RefuelScreen())),
-                                    ),
-                                  ),
+                                _buildDashboardButton(
+                                  context: context,
+                                  label: 'Abastecimentos',
+                                  icon: Icons.local_gas_station,
+                                  color: Colors.orange.shade700,
+                                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RefuelScreen())),
                                 ),
                                 const SizedBox(height: 16),
 
